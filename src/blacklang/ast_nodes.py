@@ -81,6 +81,7 @@ class Assign(Stmt):
     name: str
     value: Expr
     type_annotation: Optional[str] = None   # 可选: int/float/string/bool/list
+    is_decl: bool = False                    # True = `let` 声明；False = 重新赋值
 
 
 @dataclass

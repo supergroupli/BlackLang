@@ -110,7 +110,8 @@ class Parser:
         value = self._expr()
         if self._check("OP", ";"):
             self._advance()
-        return Assign(name=name, value=value, type_annotation=type_annotation)
+        return Assign(name=name, value=value, type_annotation=type_annotation,
+                      is_decl=True)
 
     def _if(self) -> If:
         self._expect("KEYWORD", "if")

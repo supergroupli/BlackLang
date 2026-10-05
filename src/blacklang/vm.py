@@ -109,6 +109,11 @@ class Compiler:
         self._slots = len(params)        # 单调槽位计数：局部变量 + 隐藏循环槽
         fc = _FC()
         scope = {p: i for i, p in enumerate(params)}
+        # ★ 预登记函数体内所有 `let` 声明为真正的局部槽 —— 保证递归可重入
+        for decl in _collect_let_names(body):
+            if decl not in scope:
+                scope[decl] = self._slots
+                self._slots += 1
         for s in body:
             self._stmt(s, fc, scope, fn_names)
         fc.e(RET)
@@ -118,6 +123,10 @@ class Compiler:
     def _stmt(self, s, fc, scope, fn_names):
         if isinstance(s, Assign):
             self._expr(s.value, fc, scope, fn_names)
+            if s.name not in scope and getattr(s, "is_decl", False):
+                # 兜底：预扫描漏掉的 let（如动态构造的语句）就地分配局部槽
+                scope[s.name] = self._slots
+                self._slots += 1
             if s.name in scope:
                 fc.e(LSTORE, scope[s.name])
             else:
@@ -434,3 +443,28 @@ def run_vm(program, builtins=None, interop=None):
     funcs = Compiler(program).compile()
     vm = VM(funcs, builtins=builtins, interop=interop, uses=uses)
     return vm.run()
+
+def _collect_let_names(stmts) -> List[str]:
+    """递归收集语句块中所有 `let` 声明的变量名（保持首次出现顺序）。"""
+    found: List[str] = []
+    seen = set()
+
+    def walk(ss):
+        for st in ss or []:
+            if isinstance(st, Assign):
+                if getattr(st, "is_decl", False) and st.name not in seen:
+                    seen.add(st.name)
+                    found.append(st.name)
+            elif isinstance(st, If):
+                for _, b in st.branches:
+                    walk(b)
+                walk(st.else_body)
+            elif isinstance(st, While):
+                walk(st.body)
+            elif isinstance(st, ForIn):
+                walk(st.body)
+            elif isinstance(st, Sandbox):
+                walk(st.body)
+
+    walk(stmts)
+    return found

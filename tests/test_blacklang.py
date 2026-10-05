@@ -821,3 +821,73 @@ class TestLLVMJIT(unittest.TestCase):
         if v is None:
             self.skipTest("llvmlite 不可用")
         self.assertEqual(jit_ptr_mode(), "opaque" if v >= 16 else "typed")
+
+
+class TestLetScoping(unittest.TestCase):
+    """`let` = 声明：函数内为真正的局部变量，递归可重入（本轮修复的 VM bug）。"""
+    REENTRANT = (
+        "fn f(n) {\n"
+        "  let t = n * 2;\n"
+        "  if n > 1 {\n"
+        "    let r = f(n - 1);\n"
+        "    return t + r;\n"
+        "  }\n"
+        "  return t;\n"
+        "}\n"
+        "run main: { print(f(3)); }"
+    )
+
+    def test_parser_marks_let_as_decl(self):
+        from blacklang.ast_nodes import Assign, If, While, ForIn, Sandbox
+        globals()["Assign"] = Assign
+        globals()["If"] = If
+        globals()["While"] = While
+        globals()["ForIn"] = ForIn
+        globals()["Sandbox"] = Sandbox
+        prog = parse("run main: { let x = 1; x = 2; }")
+        assigns = []
+
+        def walk(ss):
+            for s in ss:
+                if isinstance(s, Assign):
+                    assigns.append(s)
+                elif isinstance(s, If):
+                    for _, b in s.branches:
+                        walk(b)
+                elif isinstance(s, While):
+                    walk(s.body)
+                elif isinstance(s, ForIn):
+                    walk(s.body)
+                elif isinstance(s, Sandbox):
+                    walk(s.body)
+
+        walk(prog.entries)
+        main_block = assigns or []
+        self.assertTrue(main_block, "未找到赋值语句")
+        self.assertTrue(main_block[0].is_decl, "`let x` 应标记为声明")
+        if len(main_block) > 1:
+            self.assertFalse(main_block[1].is_decl, "`x = 2` 应为重新赋值")
+
+    def test_vm_reentrant_let(self):
+        from blacklang.vm import run_vm
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_vm(parse(self.REENTRANT))
+        self.assertEqual(out.getvalue().strip(), "12")
+
+    def test_all_backends_agree_on_reentrancy(self):
+        outs = {}
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(self.REENTRANT))
+        outs["vm"] = o.getvalue()
+        from blacklang.codegen import compile_to_python, exec_compiled
+        outs["py"] = exec_compiled(compile_to_python(parse(self.REENTRANT)))
+        from blacklang.llvmbackend import llvm_available, compile_to_llvm_ir, build_and_run_ir
+        if llvm_available():
+            r = build_and_run_ir(compile_to_llvm_ir(parse(self.REENTRANT)))
+            self.assertTrue(r["ok"], (r.get("cc_out") or "")[:300])
+            outs["llvm"] = r["stdout"]
+        self.assertEqual(len(set(outs.values())), 1, f"路径不一致: {outs}")
+        self.assertEqual(outs["vm"].strip(), "12")
