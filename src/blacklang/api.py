@@ -106,6 +106,29 @@ def native_run(source: str) -> Dict[str, Any]:
     return out
 
 
+def llvm_run(source: str, use_jit: bool = False) -> Dict[str, Any]:
+    """走 LLVM 路径运行：AOT(clang 编译 IR) 或进程内 JIT(llvmlite)。
+    返回 {ok, stdout, errors, ir, jit, ptr_mode, fallback}。"""
+    try:
+        program, checker, errors = _compile(source)
+    except (LexError, ParseError) as e:
+        return {"ok": False, "stdout": "", "errors": [str(e)], "fallback": False}
+    if errors:
+        return {"ok": False, "stdout": "", "errors": errors, "fallback": False}
+    from .llvmbackend import jit_available, llvm_available, run_llvm
+    if use_jit and not jit_available():
+        res = run_llvm(program, use_jit=False)
+        res["fallback"] = True
+        return res
+    if llvm_available() is None:
+        res = run(source)
+        res["fallback"] = True
+        return res
+    res = run_llvm(program, use_jit=use_jit)
+    res["fallback"] = False
+    return res
+
+
 def diagnose(source: str) -> Dict[str, Any]:
     """结构化诊断（机器可读），供 LLM/代理定位并自纠。
     注意：函数名为 `diagnose`，避免与 `blacklang.diagnostics` 子模块同名。"""

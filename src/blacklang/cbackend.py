@@ -586,7 +586,7 @@ class CodeGenC:
                 # 拼接 + 换行
                 expr = parts[0]
                 for p in parts[1:]:
-                    expr = f"({expr}, {p})"
+                    expr = f'({expr}, printf(" "), {p})'
                 return f"({expr}, printf(\"\\n\"))"
             if n in ("str",):
                 if not e.args:

@@ -26,6 +26,7 @@ from blacklang.parser import parse                              # noqa: E402
 from blacklang.vm import run_vm                                 # noqa: E402
 from blacklang.codegen import compile_to_python                 # noqa: E402
 from blacklang.cbackend import compile_to_c, c_available        # noqa: E402
+from blacklang.llvmbackend import compile_to_llvm_ir, host_target_info, _with_target  # noqa: E402
 
 FIB_N = 26
 LOOP_N = 2_000_000
@@ -133,11 +134,30 @@ def run_exe(exe: str):
     return subprocess.run([exe], capture_output=True, text=True).stdout
 
 
+def compile_llvm(bl_src: str) -> str:
+    """BL → LLVM IR → clang -O2 → 可执行文件（编译一次）。"""
+    import subprocess
+    import tempfile
+    from blacklang.parser import parse as _parse
+    cc = c_available()
+    d = tempfile.mkdtemp(prefix="bl_bench_llvm_")
+    ll = os.path.join(d, "p.ll")
+    exe = os.path.join(d, "p")
+    dl, tr = host_target_info(cc)
+    ir = _with_target(compile_to_llvm_ir(_parse(bl_src)), dl, tr)
+    with open(ll, "w", encoding="utf-8") as f:
+        f.write(ir)
+    subprocess.run([cc, "-O2", "-o", exe, ll, "-lm"],
+                   capture_output=True, text=True, check=True)
+    return exe
+
+
 def bench_workload(label, bl_src, py_fn, c_ref_src=None):
     vm_t = timeit(lambda: run_vm_src(bl_src))
     aot_t = timeit(lambda: run_aot_src(bl_src))
     py_t = timeit(py_fn)
     c_t = cref_t = compile_ms = None
+    llvm_t = llvm_compile_ms = None
     if c_available():
         t = time.perf_counter()
         exe_bl = compile_c(compile_to_c(parse(bl_src)))
@@ -146,6 +166,10 @@ def bench_workload(label, bl_src, py_fn, c_ref_src=None):
         if c_ref_src:
             exe_ref = compile_c(c_ref_src)          # 只编译一次，不计入计时
             cref_t = timeit(lambda: run_exe(exe_ref))
+        t = time.perf_counter()
+        exe_ll = compile_llvm(bl_src)
+        llvm_compile_ms = (time.perf_counter() - t) * 1000
+        llvm_t = timeit(lambda: run_exe(exe_ll))
     print()
     print(f"◆ {label}")
     print(f"   解释(VM)        {vm_t*1000:9.1f} ms   vs CPython {vm_t/py_t:7.2f}x")
@@ -153,6 +177,10 @@ def bench_workload(label, bl_src, py_fn, c_ref_src=None):
     if c_t is not None:
         print(f"   编译(AOT→C)      {c_t*1000:9.1f} ms   vs CPython {c_t/py_t:7.2f}x"
               f"   vs 手写C {c_t/cref_t:6.2f}x")
+    if llvm_t is not None:
+        print(f"   编译(AOT→LLVM)   {llvm_t*1000:9.1f} ms   vs CPython {llvm_t/py_t:7.2f}x"
+              f"   vs 手写C {llvm_t/cref_t:6.2f}x   (IR→clang -O2 编译 {llvm_compile_ms:.0f}ms 未计入)")
+    if c_t is not None:
         print(f"   手写 C 参照      {cref_t*1000:9.1f} ms   (纯执行, 一次性 clang -O2 编译 {compile_ms:.0f}ms 未计入)")
     print(f"   参照(CPython)    {py_t*1000:9.1f} ms   (1.00x)")
     return vm_t, aot_t, py_t, c_t
@@ -161,7 +189,7 @@ def bench_workload(label, bl_src, py_fn, c_ref_src=None):
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     print("=" * 74)
-    print("BlackLang 性能基准 · 解释 / AOT→Python / AOT→C / CPython（越小越快）")
+    print("BlackLang 性能基准 · 解释 / AOT→Python / AOT→C / AOT→LLVM / CPython")
     print("=" * 74)
     if which in ("all", "fib"):
         bench_workload(f"fib({FIB_N})  递归密集", BL_FIB, lambda: py_fib(FIB_N), C_FIB)
@@ -169,7 +197,7 @@ def main():
         bench_workload(f"while 循环 ×{LOOP_N}  算术/调度", BL_LOOP,
                        lambda: py_loop(LOOP_N), C_LOOP)
     print()
-    print("结论：AOT→C 把 BlackLang 编译成本机码，性能进入「Python 与 C 之间」的 C 侧；")
+    print("结论：AOT→C 与 AOT→LLVM 都把 BlackLang 编译成本机码，进入「Python 与 C 之间」的 C 侧；")
     print("      AOT→Python ≈ CPython；解释(VM) 适合实时/REPL 与互操作。")
     print("全面数值见 benchmarks/RESULTS.md。")
 

@@ -18,7 +18,7 @@ BlackLang 不是为人类程序员设计的，而是为一等公民——**大�
 - 🗂 [语言规范草案](docs/语言规范草案.md) —— 语法与核心概念初稿
 - 🛡 [安全模型](docs/安全模型.md) —— 三层防御：编译期拦截·运行期强制·跨进程墙
 - 🤖 [AI 集成](docs/AI集成.md) —— 让 LLM/Agent 直接调用 BlackLang（LangChain Tool / API / CLI）
-- 📊 [性能基准](benchmarks/RESULTS.md) —— 解释(VM) / AOT→Python / **AOT→C** / CPython 四路径对比
+- 📊 [性能基准](benchmarks/RESULTS.md) —— 解释(VM) / AOT→Python / AOT→C / **AOT→LLVM** / JIT / CPython 对比
 
 ## 当前实现（MVP → 可交付后端）
 
@@ -38,6 +38,7 @@ src/blacklang/
   vm.py          # ★ 字节码编译器 + 栈式 VM（性能路径，编译期通过后执行）
   codegen.py     # ★ AOT→Python 后端：AST 直译为 Python，≈CPython 速度
   cbackend.py    # ★ AOT→C 后端：AST → C 源码 → clang -O2 → 本机码（C 速度）
+  llvmbackend.py # ★ AOT→LLVM 后端：AST → LLVM IR → clang/JIT；最快且支持进程内真 JIT
   sandbox.py     # ★ 跨进程沙箱：子进程隔离 + 超时墙（三层防御最外一层）
   diagnostics.py # ★ 结构化诊断：机器可读 JSON(code/line/hint)，AI 可自纠
   scaffold.py    # ★ --init 一键生成可运行项目骨架
@@ -47,14 +48,17 @@ src/blacklang/
 
 **已实现特性：** 变量/赋值、算术、字符串（含 `+` 数值自动转字符串）、条件/循环、
 递归函数、列表/字典、`==`/`!=`/`<` 比较、`sandbox` 权限强制（`readonly-fs`/`net`…）、
-`use python:/node:` 互操作、字节码 VM、AOT→Python 编译后端、**AOT→C 原生编译后端**、
-跨进程沙箱、结构化 JSON 诊断。
+`use python:/node:` 互操作、字节码 VM、AOT→Python 编译后端、AOT→C 原生编译后端、
+**AOT→LLVM 后端（含进程内真 JIT）**、跨进程沙箱、结构化 JSON 诊断。
 
 **运行方式：**
 
 ```bash
 cd 创建新的编程语言
 PYTHONPATH=src python3 -m blacklang examples/hello.bl        # 运行文件(编译期通过才执行)
+PYTHONPATH=src python3 -m blacklang --llvm <f>               # ★ AOT→LLVM 原生运行(最快)
+PYTHONPATH=src python3 -m blacklang --emit-llvm <f>          # ★ 查看 LLVM IR
+PYTHONPATH=src python3 -m blacklang --jit <f>                # ★ 进程内 LLVM JIT(需 llvmlite)
 PYTHONPATH=src python3 -m blacklang --native <f>             # ★ AOT→C 编译成本机码运行
 PYTHONPATH=src python3 -m blacklang --emit-c <f>             # ★ 查看生成的 C 源码
 PYTHONPATH=src python3 -m blacklang examples/native_demo.bl  # ★ 计算密集示例(可用 --native 加速)
@@ -66,7 +70,7 @@ PYTHONPATH=src python3 -m blacklang --sandbox <f> --timeout N # ★ 跨进程沙
 PYTHONPATH=src python3 -m blacklang --init <dir>            # ★ 一键生成可运行项目
 PYTHONPATH=src python3 -m blacklang -i                      # REPL(多行/持久状态/互操作)
 PYTHONPATH=src python3 benchmarks/bench.py                   # ★ 四路径性能基准
-python3 -m unittest tests.test_blacklang -v                 # 95 项测试
+python3 -m unittest tests.test_blacklang -v                 # 111 项测试
 ```
 
 **执行模型**：`blacklang f.bl` 会**先做编译期(能力+类型)检查，通过后才执行**——既保留
@@ -76,7 +80,9 @@ python3 -m unittest tests.test_blacklang -v                 # 95 项测试
 |------|------|------|--------|
 | 解释 | `blacklang f.bl` | 慢 ~40–57x CPython | 开发/REPL/互操作 |
 | AOT→Python | `api.native_run` 前置/`codegen` | ≈ CPython | 算法任务，零工具链 |
-| **AOT→C** | `blacklang --native f.bl` | **C 速度（<1x CPython）** | 生产热路径 |
+| **AOT→C** | `blacklang --native f.bl` | C 速度（0.16–0.94x） | 需要可审计 C 源码 |
+| **AOT→LLVM** | `blacklang --llvm f.bl` | **最快（0.15–0.52x）** | 生产热路径 |
+| **LLVM JIT** | `blacklang --jit f.bl` | 同 LLVM，**零构建延迟** | AI 生成即运行 |
 
 性能基线见 [benchmarks/RESULTS.md](benchmarks/RESULTS.md)（四路径对比 CPython 与手写 C）。
 

@@ -40,6 +40,9 @@ m = bl.manifest(source)             # -> program_caps / per_fn / verdict
 d = bl.diagnose(source)             # -> {"ok", "diagnostics": [{code,line,col,message,hint,stage}]}
 # ★ AOT→C 原生编译运行（C 速度；不支持则自动回退 VM，fallback=True）
 r = bl.native_run(source)           # -> {"ok","stdout","errors","c_source","fallback"}
+# ★ AOT→LLVM / 进程内 JIT（最快；JIT 零构建延迟）
+r = bl.llvm_run(source)             # -> {"ok","stdout","errors","ir","ptr_mode"}
+r = bl.llvm_run(source, use_jit=True)  # 需要 llvmlite
 ```
 
 跨进程沙箱：
@@ -83,8 +86,11 @@ blacklang --check src/main.bl        # 编译期(能力+类型)检查
 blacklang --check src/main.bl --json # ★ 结构化 JSON 诊断（喂给 LLM 自纠）
 blacklang --manifest src/main.bl     # 输出能力清单 JSON
 blacklang src/main.bl                # 安全运行（编译期通过才执行，VM 路径）
-blacklang --native src/main.bl       # ★ AOT→C 编译成本机码运行（C 速度）
-blacklang --emit-c src/main.bl       # ★ 查看生成的 C 源码（可审计）
+blacklang --native src/main.bl       # AOT→C 编译成本机码运行（C 速度）
+blacklang --emit-c src/main.bl       # 查看生成的 C 源码（可审计）
+blacklang --llvm src/main.bl         # ★ AOT→LLVM 原生运行（最快）
+blacklang --emit-llvm src/main.bl    # ★ 查看 LLVM IR
+blacklang --jit src/main.bl          # ★ 进程内 LLVM JIT（需 llvmlite，零构建）
 blacklang --sandbox src/main.bl      # 子进程沙箱 + 超时墙
 blacklang --init myproj              # 生成可运行项目骨架
 ```

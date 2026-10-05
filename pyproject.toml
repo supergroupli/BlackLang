@@ -10,6 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
+[project.optional-dependencies]
+# 进程内 LLVM JIT（--jit）。AOT→LLVM(--llvm) 只需系统 clang，无需此依赖。
+llvm = ["llvmlite>=0.40"]
+
 [project.scripts]
 blacklang = "blacklang.cli:main"
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 __version__ = "0.2.0"
 
 from .api import compile_check, diagnose as diagnose, manifest as manifest, \
-    native_run as native_run, run as run                                       # noqa: F401
+    native_run as native_run, llvm_run as llvm_run, run as run                 # noqa: F401
 from .checker import CapabilityManifest, StaticChecker, static_check      # noqa: F401
 from .evaluator import run_program
 from .interop import InteropBus, InteropValue                             # noqa: F401
@@ -24,7 +24,7 @@ __all__ = [
     "run_program", "parse", "tokenize",
     "static_check", "StaticChecker", "CapabilityManifest",
     "type_check", "compile_check", "manifest", "run",
-    "native_run", "diagnose",
+    "native_run", "llvm_run", "diagnose",
     "InteropBus", "InteropValue",
     "run_vm", "Compiler", "VM", "__version__",
 ]

@@ -183,6 +183,73 @@ def sandbox_run_file(path: str, timeout: float = 5.0) -> int:
     return 1
 
 
+def emit_llvm_file(path: str) -> int:
+    """`blacklang --emit-llvm <f>`：打印 LLVM IR（AOT 用 opaque 指针）。"""
+    from .llvmbackend import compile_to_llvm_ir
+    from .cbackend import CBackendError
+    try:
+        program = parse(_load(path))
+        ir = compile_to_llvm_ir(program)
+    except OSError as e:
+        print(_render_error(e))
+        return 1
+    except (LexError, ParseError) as e:
+        print(_render_error(e))
+        return 1
+    except CBackendError as e:
+        from .diagnostics import classify, render
+        print(render([classify(str(e))]))
+        return 1
+    sys.stdout.write(ir)
+    return 0
+
+
+def llvm_run_file(path: str, use_jit: bool = False) -> int:
+    """`blacklang --llvm/--jit <f>`：LLVM 编译（AOT 或进程内 JIT）并运行。"""
+    from .llvmbackend import jit_available, llvm_available, run_llvm
+    from .cbackend import CBackendError
+    try:
+        program = parse(_load(path))
+    except OSError as e:
+        print(_render_error(e))
+        return 1
+    except (LexError, ParseError) as e:
+        print(_render_error(e))
+        return 1
+    # 编译期(能力+类型)不过不执行（安全默认）
+    try:
+        checker, cap_errors = static_check(program)
+        type_errors = type_check(program, checker)
+    except Exception as e:  # noqa: BLE001
+        print(_render_error(e))
+        return 1
+    if cap_errors + type_errors:
+        print("[BlackLang 编译期拦截，未执行]")
+        for e in cap_errors + type_errors:
+            print("  ✗ " + e)
+        return 1
+    if use_jit and not jit_available():
+        print("[BlackLang jit] 未找到可用的 llvmlite，回退到 LLVM AOT(clang) 路径。")
+        use_jit = False
+    if not use_jit and llvm_available() is None:
+        print("[BlackLang llvm] 未找到 clang，回退到字节码 VM。")
+        return run_file(path)
+    try:
+        res = run_llvm(program, use_jit=use_jit)
+    except CBackendError as e:
+        print(f"[BlackLang llvm] {e}")
+        print("[BlackLang llvm] 已回退到字节码 VM 路径。")
+        return run_file(path)
+    if not res["ok"]:
+        for e in res["errors"]:
+            print(_render_error(RuntimeError(e)) if e else "[BlackLang llvm] 运行失败")
+        if res.get("cc_out"):
+            sys.stderr.write(res["cc_out"])
+        return 1
+    sys.stdout.write(res["stdout"])
+    return 0
+
+
 def _looks_complete(src: str) -> bool:
     """是否已是一段完整代码：当花括号括号配平(深度=0)即视为可提交执行。"""
     depth = src.count("{") - src.count("}")
@@ -269,6 +336,21 @@ def main() -> int:
             print("用法: python -m blacklang --check <file.bl> [--json]")
             return 1
         return static_check_file(args[1], as_json=("--json" in args))
+    if args[0] == "--emit-llvm":
+        if len(args) < 2:
+            print("用法: python -m blacklang --emit-llvm <file.bl>")
+            return 1
+        return emit_llvm_file(args[1])
+    if args[0] == "--llvm":
+        if len(args) < 2:
+            print("用法: python -m blacklang --llvm <file.bl>")
+            return 1
+        return llvm_run_file(args[1], use_jit=False)
+    if args[0] == "--jit":
+        if len(args) < 2:
+            print("用法: python -m blacklang --jit <file.bl>")
+            return 1
+        return llvm_run_file(args[1], use_jit=True)
     if args[0] == "--emit-c":
         if len(args) < 2:
             print("用法: python -m blacklang --emit-c <file.bl>")
@@ -311,6 +393,9 @@ def main() -> int:
         print("  python -m blacklang <file.bl>     运行程序(VM 性能路径)")
         print("  python -m blacklang --native <f>  AOT→C 编译成本机码并运行(不支持则回退 VM)")
         print("  python -m blacklang --emit-c <f>  打印 AOT→C 生成的 C 源码")
+        print("  python -m blacklang --llvm <f>    AOT→LLVM IR → clang 编译本机码并运行")
+        print("  python -m blacklang --emit-llvm <f> 打印 LLVM IR")
+        print("  python -m blacklang --jit <f>     llvmlite 进程内 JIT 运行(需 llvmlite)")
         print("  python -m blacklang --check <f>   编译期检查(能力+类型), 加 --json 输出结构化诊断")
         print("  python -m blacklang --manifest <f> 输出能力清单 JSON")
         print("  python -m blacklang --sandbox <f> 子进程沙箱运行(超时墙), 加 --timeout N")

@@ -715,6 +715,11 @@ class TestCrossPathConsistency(unittest.TestCase):
             r = build_and_run(compile_to_c(parse(src)))
             self.assertTrue(r["ok"], r.get("cc_out", ""))
             outs["c"] = r["stdout"]
+        from blacklang.llvmbackend import llvm_available, compile_to_llvm_ir, build_and_run_ir
+        if llvm_available():
+            r2 = build_and_run_ir(compile_to_llvm_ir(parse(src)))
+            self.assertTrue(r2["ok"], (r2.get("cc_out") or "")[:400])
+            outs["llvm"] = r2["stdout"]
         return outs
 
     def test_all_paths_agree(self):
@@ -724,3 +729,95 @@ class TestCrossPathConsistency(unittest.TestCase):
             self.assertEqual(
                 len(vals), 1,
                 f"路径输出不一致 for {src!r}: {outs}")
+
+
+class TestLLVMBackend(unittest.TestCase):
+    """AOT→LLVM IR → clang 编译为本机码并运行。"""
+    @classmethod
+    def setUpClass(cls):
+        from blacklang.llvmbackend import llvm_available
+        cls.cc = llvm_available()
+
+    def _llvm(self, src):
+        self.assertIsNotNone(self.cc, "无 clang，跳过")
+        from blacklang.llvmbackend import compile_to_llvm_ir, build_and_run_ir
+        r = build_and_run_ir(compile_to_llvm_ir(parse(src)))
+        self.assertTrue(r["ok"], f"LLVM 运行失败: {r['errors']} {(r.get('cc_out') or '')[:400]}")
+        return r["stdout"].strip()
+
+    def test_llvm_arith(self):
+        self.assertEqual(self._llvm("run main: { print(2 + 3 * 4); }"), "14")
+
+    def test_llvm_true_division(self):
+        self.assertEqual(self._llvm("run main: { print(10 / 4); }"), "2.5")
+
+    def test_llvm_recursion(self):
+        src = ("fn fib(n: int) -> int: { if n<2: { return n; } "
+               "return fib(n-1)+fib(n-2); } run main: { print(fib(22)); }")
+        self.assertEqual(self._llvm(src), "17711")
+
+    def test_llvm_while(self):
+        self.assertEqual(self._llvm("run main: { let s=0; let i=0; while i<1000: { s=s+i; i=i+1; } print(s); }"), "499500")
+
+    def test_llvm_for_list(self):
+        self.assertEqual(self._llvm("run main: { let s=0; for i in [1,2,3,4,5]: { s=s+i; } print(s); }"), "15")
+
+    def test_llvm_string_concat(self):
+        self.assertEqual(self._llvm('run main: { let n="BL"; print("hi " + n); }'), "hi BL")
+
+    def test_llvm_string_plus_number(self):
+        self.assertEqual(self._llvm('run main: { let n=3; print("n=" + n); }'), "n=3")
+
+    def test_llvm_float_shortest_repr(self):
+        self.assertEqual(self._llvm("run main: { print(0.1 + 0.2); }"), "0.30000000000000004")
+        self.assertEqual(self._llvm("run main: { print(1.0 / 3.0); }"), "0.3333333333333333")
+        self.assertEqual(self._llvm("run main: { print(1.5 * 2 + 1); }"), "4.0")
+
+    def test_llvm_mod(self):
+        self.assertEqual(self._llvm("run main: { print(10 % 3); }"), "1")
+        self.assertEqual(self._llvm("run main: { print(10.5 % 3); }"), "1.5")
+
+    def test_llvm_logic_and_if(self):
+        self.assertEqual(self._llvm('run main: { if 1>0 and 2>1: { print("both"); } }'), "both")
+        self.assertEqual(self._llvm('run main: { if 3>2: { print("yes"); } else: { print("no"); } }'), "yes")
+
+    def test_llvm_multiarg_print(self):
+        self.assertEqual(self._llvm("run main: { print(1, 2.5, \"z\"); }"), "1 2.5 z")
+
+    def test_llvm_early_return(self):
+        src = "fn f(n) { if n>0 { return 1; } return 0; }\nrun main: { print(f(5)); print(f(-1)); }"
+        self.assertEqual(self._llvm(src), "1\n0")
+
+    def test_emit_llvm_ir_text(self):
+        from blacklang.llvmbackend import compile_to_llvm_ir
+        ir = compile_to_llvm_ir(parse("run main: { print(1); }"))
+        self.assertIn("define i64 @bl_main()", ir)
+        self.assertIn("define i32 @main()", ir)
+        self.assertIn("bl_concat", ir)
+
+    def test_llvm_unsupported_interop_raises(self):
+        from blacklang.llvmbackend import compile_to_llvm_ir
+        from blacklang.cbackend import CBackendError
+        with self.assertRaises(CBackendError):
+            compile_to_llvm_ir(parse('use python: { math }\nrun main: { print(math.sqrt(4)); }'))
+
+
+class TestLLVMJIT(unittest.TestCase):
+    """进程内 LLVM JIT（需 llvmlite 可加载）。"""
+    def test_jit_if_available(self):
+        from blacklang.llvmbackend import jit_available, run_llvm
+        if not jit_available():
+            self.skipTest("llvmlite 不可用（本机 Python 无法加载第三方 dylib）")
+        r = run_llvm(parse("fn fib(n: int) -> int: { if n<2: { return n; } "
+                           "return fib(n-1)+fib(n-2); } run main: { print(fib(20)); }"),
+                     use_jit=True)
+        self.assertTrue(r["ok"], r["errors"])
+        self.assertIn("6765", r["stdout"])
+        self.assertTrue(r.get("jit"))
+
+    def test_ptr_mode_selection(self):
+        from blacklang.llvmbackend import jit_ptr_mode, llvm_jit_version
+        v = llvm_jit_version()
+        if v is None:
+            self.skipTest("llvmlite 不可用")
+        self.assertEqual(jit_ptr_mode(), "opaque" if v >= 16 else "typed")
