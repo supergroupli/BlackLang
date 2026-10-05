@@ -1,0 +1,75 @@
+// BlackLang 端到端业务示例：销售数据清洗 + 聚合报表
+// 演示三大支柱：
+//   互通  use python: { json }  读取/解析 JSON
+//   快速  纯 BL 函数与循环做过滤/聚合（可走编译路径 AOT 加速）
+//   安全  read 置于 sandbox readonly-fs: {}，编译期 + 运行期双重约束
+
+use python: { json }
+
+// 有效订单：数量大于 0
+fn is_valid(o) { return o["qty"] > 0; }
+
+// 单笔金额 = 数量 * 单价
+fn amount(o) { return o["qty"] * o["price"]; }
+
+// 该品类下所有有效订单的销售额合计
+fn category_total(orders, cat) {
+    let s = 0.0;
+    for o in orders {
+        if is_valid(o) and o["cat"] == cat {
+            s = s + amount(o);
+        }
+    }
+    return s;
+}
+
+// 统计有效订单笔数
+fn valid_count(orders) {
+    let n = 0;
+    for o in orders {
+        if is_valid(o) { n = n + 1; }
+    }
+    return n;
+}
+
+run main: {
+    sandbox readonly-fs: {
+        let raw = read("examples/business_demo/data/sales.json");
+        let data = json.loads(raw);
+        let orders = data["orders"];
+
+        print("== BlackLang 销售报表 ==");
+        print("原始订单数 = " + orders.len());
+
+        // 1) 清洗结果：有效订单
+        let total_amount = 0.0;
+        for o in orders {
+            if is_valid(o) {
+                total_amount = total_amount + amount(o);
+            }
+        }
+        print("有效订单数 = " + valid_count(orders));
+
+        // 2) 找出去重品类（仅展示 BL 能力：遍历 + append + 存在性判断）
+        let cats = [];
+        for o in orders {
+            let seen = false;
+            for c in cats {
+                if c == o["cat"] { seen = true; }
+            }
+            if seen == false {
+                cats.append(o["cat"]);
+            }
+        }
+
+        // 3) 按品类聚合销售额
+        print("== 分品类销售额 ==");
+        for c in cats {
+            print("  " + c + " : " + category_total(orders, c));
+        }
+
+        print("== 合计 ==");
+        print("总销售额 = " + total_amount);
+        print("报表完成。");
+    }
+}

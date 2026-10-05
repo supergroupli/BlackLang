@@ -1,0 +1,30 @@
+// 编译期能力清单演示：各处操作放置于正确授权的 sandbox 内，静态检查通过。
+run main: {
+    // 需要读文件 -> 置于 readonly-fs
+    sandbox readonly-fs: {
+        let content = read("README.md");
+        print("读文件长度:", len(content), "字节");
+    }
+
+    // 需要网络 -> 置于 net
+    sandbox net: {
+        let resp = http_get("https://api.example.com/status");
+        print("网络探测:", resp);
+    }
+
+    // 纯计算 -> 零权限，无需 sandbox
+    let total = 3 * 7 + 2;
+    print("本地计算:", total);
+}
+
+// 抽象一个需要权限读文件的函数 —— 其能力会记录在 per_fn 里
+fn load_config(path): {
+    sandbox readonly-fs: {
+        return read(path);
+    }
+}
+
+run main: {
+    let cfg = load_config("config.json");
+    print("配置字节数:", len(cfg));
+}

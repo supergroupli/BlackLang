@@ -1,0 +1,16 @@
+// 验证「安全支柱」：sandbox 权限在求值期强制
+run main: {
+    // 在授予 readonly-fs 的沙箱内：允许读文件
+    sandbox readonly-fs: {
+        let content = read("examples/hello.bl");
+        print("已读取", len(content), "个字符");
+    }
+
+    // 未授予 net 权限时，调用 http_get 会编译/运行期被拒
+    sandbox readonly-fs: {
+        print("尝试越权调用网络…");
+        // 下面这行应当抛「越权调用」错误
+        let resp = http_get("https://example.com");
+        print(resp);
+    }
+}

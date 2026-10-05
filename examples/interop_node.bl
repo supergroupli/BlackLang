@@ -1,0 +1,16 @@
+// Interop Bus → Node 宿主实验性示例（需本机有 node）
+// 运行: python3 -m blacklang examples/interop_node.bl
+// 说明: 通过 JSON-RPC 子进程调用 Node 原生模块（node:path / node:path等）。
+//       当前为实验特性，runner 在 src/blacklang/node_runner.mjs。
+
+use node: { path, os };
+
+run main: {
+    let joined = path.join("a", "b", "c.txt");
+    print("path.join ->", joined);
+
+    let base = path.basename("/usr/local/app.js");
+    print("basename ->", base);
+
+    print("os.platform ->", os.platform());
+}

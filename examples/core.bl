@@ -1,0 +1,38 @@
+// 验证语言核心：变量、算术、条件、循环、函数、列表
+run main: {
+    let a = 10;
+    let b = 3.5;
+    print("a + b =", a + b);
+    print("a / b =", a / b);
+
+    if a > 5 and b < 4: {
+        print("条件成立：a > 5 且 b < 4");
+    } elif a > 5: {
+        print("elif 分支");
+    } else: {
+        print("else 分支");
+    }
+
+    let sum = 0;
+    for i in [1, 2, 3, 4, 5]: {
+        sum = sum + i;
+    }
+    print("1..5 之和 =", sum);
+
+    let n = 0;
+    while n < 3: {
+        n = n + 1;
+    }
+    print("while 结束，n =", n);
+}
+
+fn fib(n): {
+    if n < 2: {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+run main: {
+    print("fib(10) =", fib(10));
+}

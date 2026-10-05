@@ -1,0 +1,12 @@
+{
+  "orders": [
+    {"id": 1, "region": "华东", "cat": "电子", "qty": 3, "price": 1200.00},
+    {"id": 2, "region": "华东", "cat": "家纺", "qty": 1, "price": 99.90},
+    {"id": 3, "region": "华南", "cat": "电子", "qty": -1, "price": 1200.00},
+    {"id": 4, "region": "华南", "cat": "电子", "qty": 5, "price": 899.00},
+    {"id": 5, "region": "华北", "cat": "食品", "qty": 10, "price": 15.50},
+    {"id": 6, "region": "华东", "cat": "家纺", "qty": 0, "price": 49.90},
+    {"id": 7, "region": "华北", "cat": "食品", "qty": 4, "price": 25.00},
+    {"id": 8, "region": "华南", "cat": "家纺", "qty": 2, "price": 199.00}
+  ]
+}

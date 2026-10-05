@@ -1,0 +1,21 @@
+// 真正的 Interop Bus：BlackLang 调用真实 Python 模块（math / json）
+// 运行: python3 -m blacklang examples/interop_real.bl
+
+use python: { math, json, os };
+
+run main: {
+    // 调用 math 模块函数（属性访问 + 函数调用全透传）
+    print("sqrt(144) =", math.sqrt(144));
+    print("floor(3.7) =", math.floor(3.7));
+    print("pow(2, 10) =", math.pow(2, 10));
+
+    // 调用 json 处理数据
+    let parsed = json.loads('{"name": "BlackLang", "version": 1}');
+    print("解析后姓名为:", parsed["name"], " 版本:", parsed["version"]);
+    let dumped = json.dumps({"ok": true});
+    print("序列化结果:", dumped);
+
+    // list 成员方法
+    let data = [3, 1, 4, 1, 5];
+    print("data.len() =", data.len(), "  sum() =", data.sum());
+}

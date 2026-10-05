@@ -1,0 +1,4 @@
+// BlackLang Hello World
+run main: {
+    print("Hello, BlackLang!")
+}

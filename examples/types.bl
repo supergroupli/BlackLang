@@ -1,0 +1,35 @@
+// 类型系统演示：显式标注 + 类型推断 + 数值提升
+// 运行: python3 -m blacklang examples/types.bl
+// 静态检查: python3 -m blacklang --check examples/types.bl
+
+// 显式类型标注（参数 & 返回）
+fn add(x: int, y: int) -> int: {
+    return x + y;
+}
+
+fn greet(name: string) -> string: {
+    return "你好, " + name;
+}
+
+run main: {
+    let n: int = 5;                 // 显式 int
+    let pi: float = 3.14;           // 显式 float
+    let msg: string = "hello";      // 显式 string
+    let done: bool = true;          // 显式 bool
+
+    print("add(3,4) =", add(3, 4));
+    print("greet =", greet("BlackLang"));
+
+    // 类型提升: int + float -> float
+    print("n + pi =", n + pi, "  (类型:", type(n + pi), ")");
+
+    // 类型推断: 整数相除得 float
+    print("7 / 2 =", 7 / 2, "  (类型:", type(7 / 2), ")");
+}
+
+// 下面是「类型标注写错」的例子 —— 取消注释并在 --check 下会编译期报错：
+// fn bad(x: int) -> string: { return x; }       // 返回 int 却声明 string
+// run main: {
+//     let s: int = "not a number";               // 声明 int 却赋 string
+//     let t = "a" + 1;                            // string + int 不合法
+// }

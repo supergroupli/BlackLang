@@ -1,0 +1,42 @@
+// BlackLang AOT→C 原生编译演示：计算密集型任务（素数计数 + 求和）
+// 同一份源码可以三种方式跑：
+//   blacklang            examples/native_demo.bl   # 解释(VM)
+//   blacklang --native   examples/native_demo.bl   # AOT→C 本机码（快得多）
+//   blacklang --emit-c   examples/native_demo.bl   # 查看生成的 C 源码
+
+// 判断素数
+fn is_prime(n: int) -> bool: {
+    if n < 2: { return false; }
+    let i = 2;
+    while i * i <= n: {
+        if n % i == 0: { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// 统计 [2, limit) 内的素数个数
+fn count_primes(limit: int) -> int: {
+    let c = 0;
+    let n = 2;
+    while n < limit: {
+        if is_prime(n): { c = c + 1; }
+        n = n + 1;
+    }
+    return c;
+}
+
+run main: {
+    let limit = 20000;
+    let c = count_primes(limit);
+    print("素数个数(2.." + limit + ") = " + c);
+
+    // 顺便做一个数值级数求和演示浮点
+    let s = 0.0;
+    let i = 1;
+    while i <= 1000: {
+        s = s + 1.0 / i;
+        i = i + 1;
+    }
+    print("调和级数 H(1000) = " + s);
+}
