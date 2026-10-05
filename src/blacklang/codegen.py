@@ -16,9 +16,9 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
-    While,
+    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
+    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
+    StructDef, Unary, Use, While,
 )
 
 # 语言保留词 → Python 关键字映射（BL 保留词很少，安全起见通用映射）
@@ -106,10 +106,13 @@ class CodeGen:
         out: List[str] = []
         # 收集函数定义 + 顶层 use + main 顶层语句
         func_defs: List[FuncDef] = []
+        struct_defs: List = []
         uses: List[Use] = []
         main_entries: List = []
         for e in self.program.entries:
-            if isinstance(e, FuncDef):
+            if isinstance(e, StructDef):
+                struct_defs.append(e)
+            elif isinstance(e, FuncDef):
                 func_defs.append(e)
             elif isinstance(e, Use):
                 uses.append(e)
@@ -124,8 +127,38 @@ class CodeGen:
                 for n in u.names:
                     out.append(f"import {_py_name(n)}")
         out.append("")
-        # 用户函数
-        for fd in func_defs:
+        # ★ struct → Python class（含方法 Type.method 与 attr/item 双访问）
+        plain_funcs = [f for f in func_defs if "." not in f.name]
+        methods = [f for f in func_defs if "." in f.name]
+        for sd in struct_defs:
+            out.append(f"class {_py_name(sd.name)}:")
+            fnames = [f[0] for f in sd.fields]
+            out.append(f"    def __init__(self, {', '.join(_py_name(n) for n in fnames)}):")
+            if fnames:
+                for n in fnames:
+                    out.append(f"        self.{_py_name(n)} = {_py_name(n)}")
+            else:
+                out.append("        pass")
+            for md in [m for m in methods if m.name.split(".", 1)[0] == sd.name]:
+                mname = md.name.split(".", 1)[1]
+                mparams = [p for p in md.params if p != "self"]
+                sig = ", ".join(["self"] + [_py_name(p) for p in mparams])
+                out.append(f"    def {_py_name(mname)}({sig}):")
+                body = _indent(_indent(self._stmts(md.body, 1))) if self._stmts(md.body, 1) else ["        pass"]
+                out.extend(body)
+            out.append("    def __getitem__(self, k): return getattr(self, k)")
+            out.append("    def __setitem__(self, k, v): setattr(self, k, v)")
+            if fnames:
+                items = ", ".join(
+                    '"%s=" + repr(self.%s)' % (n, _py_name(n)) for n in fnames)
+                out.append(
+                    '    def __repr__(self): return "%s(" + ", ".join([%s]) + ")"'
+                    % (sd.name, items))
+            else:
+                out.append('    def __repr__(self): return "%s()"' % sd.name)
+            out.append("")
+        # 用户函数（不含方法）
+        for fd in plain_funcs:
             params = ", ".join(_py_name(p) for p in fd.params)
             out.append(f"def {_py_name(fd.name)}({params}):")
             stmts = self._stmts(fd.body, 1)
@@ -150,6 +183,10 @@ class CodeGen:
     def _stmt(self, s, level: int) -> List[str]:
         if isinstance(s, Assign):
             return [f"{_py_name(s.name)} = {self._expr(s.value)}"]
+        if isinstance(s, AttrAssign):
+            return [f"{self._expr(s.obj)}.{_py_name(s.attr)} = {self._expr(s.value)}"]
+        if isinstance(s, StructDef):
+            return []
         if isinstance(s, ExprStmt):
             return [self._expr(s.expr)]
         if isinstance(s, If):

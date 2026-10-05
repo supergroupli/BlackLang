@@ -11,15 +11,16 @@ import operator as _op
 from typing import Any, Dict, List
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
-    While,
+    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
+    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
+    StructDef, Unary, Use, While,
 )
 from .interop import InteropValue
+from .values import BoundMethod, StructInstance
 
 # ---- 操作码 ----
 PUSH, LOAD, STORE, LLOAD, LSTORE, BINOP, UOP, CMP, JUMP, JIF, JIT, DUP, \
-    POPOP, CALL, RET, MLIST, GETITEM, GETATTR, MAKEDICT = range(19)
+    POPOP, CALL, RET, MLIST, GETITEM, GETATTR, MAKEDICT, ATTRSET = range(20)
 
 OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD = 0, 1, 2, 3, 4
 OP_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE = 5, 6, 7, 8, 9, 10
@@ -91,6 +92,9 @@ class Compiler:
         self.funcs: Dict[str, Func] = {}
 
     def compile(self) -> Dict[str, Func]:
+        self.structs: Dict[str, List[str]] = {
+            e.name: [f[0] for f in e.fields]
+            for e in self.program.entries if isinstance(e, StructDef)}
         fn_names = {e.name for e in self.program.entries if isinstance(e, FuncDef)}
         # 先编译用户函数（递归可见性通过 globals 注册解决）
         for e in self.program.entries:
@@ -131,6 +135,12 @@ class Compiler:
                 fc.e(LSTORE, scope[s.name])
             else:
                 fc.e(STORE, _in(fc, s.name))
+        elif isinstance(s, AttrAssign):
+            self._expr(s.obj, fc, scope, fn_names)
+            self._expr(s.value, fc, scope, fn_names)
+            fc.e(ATTRSET, _in(fc, s.attr))
+        elif isinstance(s, StructDef):
+            pass  # struct 定义只用于登记，不产生代码
         elif isinstance(s, ExprStmt):
             self._expr(s.expr, fc, scope, fn_names)
             if not isinstance(s.expr, Call):
@@ -280,9 +290,19 @@ class _UserFunc:
         self.func = func
 
 
+class _StructCtor:
+    """struct 构造器：Point(3, 4) → StructInstance。"""
+    __slots__ = ("name", "fields")
+
+    def __init__(self, name, fields):
+        self.name = name
+        self.fields = list(fields)
+
+
 class VM:
     def __init__(self, funcs: Dict[str, Func], builtins: dict = None, interop=None,
-                 uses: List = None):
+                 uses: List = None, structs: Dict[str, List[str]] = None):
+        self.structs = structs or {}
         self.funcs = funcs
         self.builtins = builtins or {}
         self.interop = interop
@@ -291,6 +311,9 @@ class VM:
         for name, f in funcs.items():
             if name != "<main>":
                 self.globals[name] = _UserFunc(f)
+        # ★ struct 构造器注册为可调用全局（Point(...) 直接走 LOAD Point + CALL）
+        for sname, sfields in self.structs.items():
+            self.globals[sname] = _StructCtor(sname, sfields)
         # 处理互操作绑定 use
         if uses and interop is not None:
             for u in uses:
@@ -396,11 +419,34 @@ class VM:
                 obj = stack.pop()
                 stack.append(_getattr(obj, names[arg]))
                 ip += 2
+            elif op == ATTRSET:
+                val = stack.pop()
+                obj = stack.pop()
+                if not isinstance(obj, StructInstance):
+                    raise RuntimeError("属性赋值只支持 struct 实例")
+                obj.fields[names[arg]] = val
+                stack.append(val)
+                ip += 2
             else:
                 raise RuntimeError(f"未知操作码 {op}")
         return None
 
     def _call(self, callee, args):
+        if isinstance(callee, _StructCtor):
+            if len(args) != len(callee.fields):
+                raise RuntimeError(
+                    f"{callee.name} 需要 {len(callee.fields)} 个字段"
+                    f"({', '.join(callee.fields)})，实际给了 {len(args)} 个")
+            methods = {}
+            for key, val in self.globals.items():
+                if isinstance(key, str) and key.startswith(callee.name + "."):
+                    methods[key.split(".", 1)[1]] = val
+            return StructInstance(callee.name, dict(zip(callee.fields, args)), methods)
+        if isinstance(callee, BoundMethod):
+            fn = callee.target.methods.get(callee.name.split(".", 1)[1])
+            if isinstance(fn, _UserFunc):
+                return self._exec(fn.func, [callee.target] + list(args), [])
+            raise RuntimeError(f"无法调用方法 {callee.name}")
         if isinstance(callee, _UserFunc):
             f = callee.func
             return self._exec(f, args, [])
@@ -415,6 +461,12 @@ class VM:
 
 
 def _getattr(obj, name):
+    if isinstance(obj, StructInstance):
+        if name in obj.fields:
+            return obj.fields[name]
+        if name in obj.methods:
+            return BoundMethod(f"{obj.type_name}.{name}", obj)
+        raise RuntimeError(f"{obj.type_name} 没有字段/方法 {name!r}")
     if isinstance(obj, InteropValue):
         child = obj.bind_getattr(name)
         if child is None:
@@ -440,8 +492,10 @@ def run_vm(program, builtins=None, interop=None):
     if uses and interop is None:
         from .interop import InteropBus
         interop = InteropBus()
-    funcs = Compiler(program).compile()
-    vm = VM(funcs, builtins=builtins, interop=interop, uses=uses)
+    compiler = Compiler(program)
+    funcs = compiler.compile()
+    vm = VM(funcs, builtins=builtins, interop=interop, uses=uses,
+            structs=getattr(compiler, "structs", {}))
     return vm.run()
 
 def _collect_let_names(stmts) -> List[str]:

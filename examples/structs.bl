@@ -1,0 +1,50 @@
+// BlackLang struct 示例：用自定义类型建模业务数据
+// 演示：struct 定义 / 位置构造 / 字段访问与赋值 / 方法（self）/ 与列表配合
+
+struct Item {
+    name: string,
+    qty: int,
+    price: float
+}
+
+// 方法：Type.method，self 自动绑定
+fn Item.total(self) {
+    return self.qty * self.price
+}
+
+fn Item.label(self) {
+    return self.name + " x" + self.qty
+}
+
+struct Cart {
+    owner: string
+}
+
+fn Cart.count(self, items) {
+    let n = 0
+    for it in items { n = n + 1 }
+    return n
+}
+
+run main: {
+    let items = [
+        Item("键盘", 2, 199.0),
+        Item("显示器", 1, 1299.0),
+        Item("鼠标", 3, 89.5)
+    ]
+
+    let total = 0.0
+    for it in items {
+        print(it.label() + "  小计=" + it.total())
+        total = total + it.total()
+    }
+
+    let cart = Cart("Alice")
+    print(cart.owner + " 的购物车共 " + cart.count(items) + " 件")
+    print("合计 = " + total)
+
+    // 字段可改：单价打折
+    let first = items[0]
+    first.price = 149.0
+    print("打折后 " + first.name + " 小计=" + first.total())
+}

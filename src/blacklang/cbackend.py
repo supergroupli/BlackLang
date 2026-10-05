@@ -25,9 +25,9 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
-    While,
+    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
+    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef,
+    Unary, Use, While,
 )
 
 
@@ -119,6 +119,12 @@ class CodeGenC:
             names = ", ".join(f"{u.lang}:{'/'.join(u.names)}" for u in self.uses)
             raise CBackendError(
                 f"C 后端暂不支持互操作 use({names})；请用 VM / AOT→Python 路径")
+        if any(isinstance(e, StructDef) for e in self.program.entries):
+            raise CBackendError(
+                "C 后端暂不支持 struct；请用 VM / AOT→Python 路径运行")
+        if any(getattr(f, "name", "").count(".") for f in self.funcs):
+            raise CBackendError(
+                "C 后端暂不支持 struct 方法（Type.method）；请用 VM / AOT→Python 路径运行")
 
     def _header(self) -> List[str]:
         return [

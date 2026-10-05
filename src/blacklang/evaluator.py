@@ -11,11 +11,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
+    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
+    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef, Unary, Use,
     While,
 )
 from .interop import InteropBus, InteropError, InteropValue
+from .values import BoundMethod, StructInstance
 
 
 class ReturnSignal(Exception):
@@ -59,6 +60,7 @@ class Evaluator:
         self.builtins = _BUILTINS
         self.caps: set = set()          # 当前累积的权限（运行期）
         self.bus = InteropBus()         # Interop Bus：与宿主语言互操作
+        self.structs: Dict[str, List[str]] = {}   # struct 名 -> 字段名列表
         self.globals: Dict[str, Any] = _make_env()
 
     # ---- 顶层执行 ----
@@ -68,6 +70,8 @@ class Evaluator:
                 self._exec_use(stmt)
             elif isinstance(stmt, FuncDef):
                 self._define(stmt)
+            elif isinstance(stmt, StructDef):
+                self.structs[stmt.name] = [f[0] for f in stmt.fields]
             else:
                 self._exec(stmt)
         return None
@@ -76,6 +80,11 @@ class Evaluator:
     def _exec(self, stmt) -> None:
         if isinstance(stmt, Assign):
             self.globals[stmt.name] = self._eval(stmt.value)
+        elif isinstance(stmt, AttrAssign):
+            obj = self._eval(stmt.obj)
+            if not isinstance(obj, StructInstance):
+                raise BlackRuntimeError("属性赋值只支持 struct 实例")
+            obj.fields[stmt.attr] = self._eval(stmt.value)
         elif isinstance(stmt, ExprStmt):
             self._eval(stmt.expr)
         elif isinstance(stmt, If):
@@ -189,6 +198,12 @@ class Evaluator:
 
     def _eval_getattr(self, node: GetAttr) -> Any:
         obj = self._eval(node.obj)
+        if isinstance(obj, StructInstance):
+            if node.attr in obj.fields:
+                return obj.fields[node.attr]
+            if node.attr in obj.methods:
+                return BoundMethod(f"{obj.type_name}.{node.attr}", obj)
+            raise BlackRuntimeError(f"{obj.type_name} 没有字段/方法 {node.attr!r}")
         if isinstance(obj, InteropValue):
             child = obj.bind_getattr(node.attr)
             if child is None:
@@ -257,7 +272,17 @@ class Evaluator:
             func, cap, _ = self.builtins[node.callee.name]
             self._require(cap, node.callee.name)
             return func(*args)
+        # struct 构造：Point(3, 4)
+        if isinstance(node.callee, Name) and node.callee.name in self.structs:
+            return self._construct(node.callee.name, args)
         callee = self._eval(node.callee)
+        if isinstance(callee, BoundMethod):
+            fn = callee.target.methods[callee.name.split(".", 1)[1]]
+            if isinstance(fn, dict) and "params" in fn:
+                return self._call_user_fn(fn, [callee.target] + list(args))
+            if callable(fn):
+                return fn(callee.target, *args)
+            raise BlackRuntimeError(f"无法调用方法 {callee.name}")
         if isinstance(callee, InteropValue):
             try:
                 return callee.bind_call(args)
@@ -287,6 +312,17 @@ class Evaluator:
             return r.value
         finally:
             self.globals = old_globals
+
+    def _construct(self, type_name: str, args: List[Any]) -> StructInstance:
+        fields = self.structs[type_name]
+        if len(args) != len(fields):
+            raise BlackRuntimeError(
+                f"{type_name} 需要 {len(fields)} 个字段({', '.join(fields)})，实际给了 {len(args)} 个")
+        methods = {}
+        for key, val in self.globals.items():
+            if isinstance(key, str) and key.startswith(type_name + "."):
+                methods[key.split(".", 1)[1]] = val
+        return StructInstance(type_name, dict(zip(fields, args)), methods)
 
     def _require(self, cap: Optional[str], name: str) -> None:
         if cap is None:

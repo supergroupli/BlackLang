@@ -218,7 +218,8 @@ rows3 = [
     ("AI 可机读诊断", "✅ 完成", "结构化诊断 BL0001/1001/1002/… + line/col/hint，--check --json，LLM 可自纠"),
     ("Phase 3 · AOT→LLVM", "✅ 完成", "AST→LLVM IR→clang 本机码：fib 0.52x CPython、循环 0.15x，快于手写 C"),
     ("Phase 3 · LLVM JIT", "✅ 完成", "llvmlite MCJIT 进程内 JIT：同 LLVM 速度且零构建(3.1ms vs AOT 360ms)"),
-    ("Phase 4 剩余", "⏭ 待推进", "所有权/借用模型、struct/match/错误处理/闭包/标准库/模块/并发"),
+    ("语言完备性·第一波", "✅ 完成", "struct 自定义类型(字段/方法/双访问) + let 声明语义(递归可重入)"),
+    ("Phase 4 剩余", "⏭ 待推进", "match/错误处理(try-catch+Result)/闭包/标准库/模块/包管理/并发"),
 ]
 for r in rows3:
     cs = t3.add_row().cells
@@ -226,7 +227,7 @@ for r in rows3:
         cs[i].text = v
 
 doc.add_paragraph()
-p(doc, "当前测试：111 项全部通过；示例全跑通含 business_demo / native_demo；五条执行路径(VM / AOT→Python / AOT→C / AOT→LLVM / JIT)，跨路径输出逐字节一致；sandbox 越权编译期拦截、死循环超时墙终止；结构化 JSON 诊断可供 LLM 机读自纠。", color=GRAY, size=10)
+p(doc, "当前测试：123 项全部通过；示例全跑通含 business_demo / native_demo；五条执行路径(VM / AOT→Python / AOT→C / AOT→LLVM / JIT)，跨路径输出逐字节一致；sandbox 越权编译期拦截、死循环超时墙终止；结构化 JSON 诊断可供 LLM 机读自纠。", color=GRAY, size=10)
 
 doc.save("/Users/superlee/Documents/deepseek-harness/创建新的编程语言/docs/BlackLang愿景书.docx")
 print("saved")

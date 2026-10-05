@@ -123,6 +123,19 @@ class FuncDef(Stmt):
 
 
 @dataclass
+class StructDef(Stmt):
+    name: str
+    fields: List[tuple] = field(default_factory=list)   # [(字段名, 类型名或 None), ...]
+
+
+@dataclass
+class AttrAssign(Stmt):
+    obj: Expr
+    attr: str
+    value: Expr
+
+
+@dataclass
 class Sandbox(Stmt):
     caps: List[str]          # 权限名，如 'readonly-fs', 'net'
     body: List[Stmt]

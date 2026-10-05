@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import List
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, Expr, ExprStmt, ForIn, FuncDef,
+    Assign, AttrAssign, Binary, Call, Compare, DictLit, Expr, ExprStmt, ForIn, FuncDef,
     GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
-    Stmt, Unary, Use, While,
+    Stmt, StructDef, Unary, Use, While,
 )
 from .tokenizer import Token, tokenize
 
@@ -80,10 +80,24 @@ class Parser:
                 return self._sandbox()
             if k == "use":
                 return self._use()
+            if k == "struct":
+                return self._struct()
             if k == "run":
                 return self._run_main()
             if k == "par":
                 raise ParseError(f"{t.line}:{t.col} par 在 MVP 中暂未实现")
+        # 属性赋值：IDENT . IDENT = expr
+        if (t.kind == "IDENT" and self._peek().kind == "OP" and self._peek().value == "."
+                and self._peek(2).kind == "IDENT" and self._peek(3).kind == "OP"
+                and self._peek(3).value == "="):
+            obj = Name(self._advance().value)
+            self._advance()          # .
+            attr = self._advance().value
+            self._advance()          # =
+            value = self._expr()
+            if self._check("OP", ";"):
+                self._advance()
+            return AttrAssign(obj=obj, attr=attr, value=value)
         # 赋值语句：IDENT = expr  (重新赋值)
         if t.kind == "IDENT" and self._peek().kind == "OP" and self._peek().value == "=":
             name = self._advance().value
@@ -112,6 +126,23 @@ class Parser:
             self._advance()
         return Assign(name=name, value=value, type_annotation=type_annotation,
                       is_decl=True)
+
+    def _struct(self) -> StructDef:
+        tok = self._expect("KEYWORD", "struct")
+        name = self._expect_ident()
+        self._expect("OP", "{")
+        fields: List[tuple] = []
+        while not self._check("OP", "}"):
+            fname = self._expect_ident()
+            ftype = None
+            if self._check("OP", ":"):
+                self._advance()
+                ftype = self._expect_ident()
+            fields.append((fname, ftype))
+            if self._check("OP", ",") or self._check("OP", ";"):
+                self._advance()
+        self._expect("OP", "}")
+        return StructDef(name=name, fields=fields)
 
     def _if(self) -> If:
         self._expect("KEYWORD", "if")
@@ -166,6 +197,9 @@ class Parser:
     def _fn(self) -> FuncDef:
         self._expect("KEYWORD", "fn")
         name = self._expect_ident()
+        if self._check("OP", "."):
+            self._advance()
+            name = name + "." + self._expect_ident()   # 方法：Type.method
         self._expect("OP", "(")
         params: List[str] = []
         param_types: List[Optional[str]] = []

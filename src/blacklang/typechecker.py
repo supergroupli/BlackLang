@@ -14,8 +14,9 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set, Union
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, ExprStmt, ForIn, FuncDef, GetAttr, GetItem,
-    If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use, While,
+    Assign, AttrAssign, Binary, Call, Compare, ExprStmt, ForIn, FuncDef, GetAttr,
+    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef, Unary,
+    Use, While,
 )
 from .checker import StaticChecker
 
@@ -57,6 +58,10 @@ class TypeChecker:
         return self.errors
 
     def _collect_fn_signatures(self):
+        self.struct_fields: Dict[str, list] = {}
+        for e in getattr(self.program, "entries", []):
+            if isinstance(e, StructDef):
+                self.struct_fields[e.name] = list(e.fields)
         self.fn_sigs: Dict[str, dict] = {}
         for e in self.program.entries:
             if isinstance(e, FuncDef):
@@ -136,6 +141,12 @@ class TypeChecker:
         return "any"
 
     def _check_stmt(self, stmt):
+        if isinstance(stmt, StructDef):
+            return   # 已由 _collect_fn_signatures 登记
+        if isinstance(stmt, AttrAssign):
+            self._check_expr(stmt.obj)
+            self._check_expr(stmt.value)
+            return
         if isinstance(stmt, Assign):
             t = self._check_expr(stmt.value)
             ann = stmt.type_annotation
@@ -190,6 +201,8 @@ class TypeChecker:
         if isinstance(node, Literal):
             return self._literal_type(node.value)
         if isinstance(node, Name):
+            if node.name in self.struct_fields:
+                return "struct"
             if node.name in self.fn_sigs:
                 return "fn"
             if node.name in self.builtin_names:
@@ -220,6 +233,14 @@ class TypeChecker:
             self._check_expr(node.right)
             return "bool"
         if isinstance(node, Call):
+            if isinstance(node.callee, Name) and node.callee.name in self.struct_fields:
+                fields = self.struct_fields[node.callee.name]
+                if len(node.args) != len(fields):
+                    self._err(f"{node.callee.name} 需要 {len(fields)} 个字段"
+                              f"({', '.join(f[0] for f in fields)})，实际给了 {len(node.args)} 个")
+                for a in node.args:
+                    self._check_expr(a)
+                return node.callee.name
             self._check_expr(node.callee)
             for a in node.args:
                 self._check_expr(a)

@@ -891,3 +891,92 @@ class TestLetScoping(unittest.TestCase):
             outs["llvm"] = r["stdout"]
         self.assertEqual(len(set(outs.values())), 1, f"路径不一致: {outs}")
         self.assertEqual(outs["vm"].strip(), "12")
+
+
+class TestStruct(unittest.TestCase):
+    """struct 用户自定义类型：定义/构造/字段/方法/字段赋值，三后端一致。"""
+    SRC = (
+        "struct Point { x: int, y: int }\n"
+        "fn Point.len2(self) { return self.x * self.x + self.y * self.y }\n"
+        "run main: {\n"
+        "  let p = Point(3, 4)\n"
+        "  print(p.x)\n"
+        "  print(p.len2())\n"
+        "  p.x = 30\n"
+        "  print(p.len2())\n"
+        "  print(p)\n"
+        "  print(p[\"y\"])\n"
+        "}"
+    )
+
+    def test_parse_struct(self):
+        from blacklang.ast_nodes import StructDef
+        prog = parse(self.SRC)
+        sd = [e for e in prog.entries if isinstance(e, StructDef)]
+        self.assertEqual(len(sd), 1)
+        self.assertEqual(sd[0].name, "Point")
+        self.assertEqual(sd[0].fields, [("x", "int"), ("y", "int")])
+
+    def test_parse_method_name(self):
+        from blacklang.ast_nodes import FuncDef
+        prog = parse(self.SRC)
+        fns = [e.name for e in prog.entries if isinstance(e, FuncDef)]
+        self.assertIn("Point.len2", fns)
+
+    def test_vm_struct(self):
+        from blacklang.vm import run_vm
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_vm(parse(self.SRC))
+        self.assertEqual(out.getvalue().split("\n")[:5],
+                         ["3", "25", "916", "Point(x=30, y=4)", "4"])
+
+    def test_treewalk_struct(self):
+        from blacklang.evaluator import Evaluator
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            Evaluator(parse(self.SRC)).run()
+        self.assertEqual(out.getvalue().split("\n")[:5],
+                         ["3", "25", "916", "Point(x=30, y=4)", "4"])
+
+    def test_python_aot_struct(self):
+        from blacklang.codegen import compile_to_python, exec_compiled
+        out = exec_compiled(compile_to_python(parse(self.SRC)))
+        self.assertEqual(out.split("\n")[:5],
+                         ["3", "25", "916", "Point(x=30, y=4)", "4"])
+
+    def test_struct_backends_agree(self):
+        outs = {}
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(self.SRC))
+        outs["vm"] = o.getvalue()
+        from blacklang.evaluator import Evaluator
+        o2 = io.StringIO()
+        with contextlib.redirect_stdout(o2):
+            Evaluator(parse(self.SRC)).run()
+        outs["tree"] = o2.getvalue()
+        from blacklang.codegen import compile_to_python, exec_compiled
+        outs["py"] = exec_compiled(compile_to_python(parse(self.SRC)))
+        self.assertEqual(len(set(outs.values())), 1, f"不一致: {outs}")
+
+    def test_check_passes(self):
+        from blacklang.checker import static_check
+        from blacklang.typechecker import type_check
+        prog = parse(self.SRC)
+        checker, cap_errors = static_check(prog)
+        self.assertEqual(cap_errors + type_check(prog, checker), [])
+
+    def test_field_count_checked(self):
+        from blacklang.checker import static_check
+        from blacklang.typechecker import type_check
+        prog = parse("struct P { x: int, y: int }\nrun main: { let p = P(1) }")
+        checker, cap_errors = static_check(prog)
+        errs = cap_errors + type_check(prog, checker)
+        self.assertTrue(any("字段" in e for e in errs), errs)
+
+    def test_c_backend_falls_back(self):
+        from blacklang.cbackend import compile_to_c, CBackendError
+        with self.assertRaises(CBackendError):
+            compile_to_c(parse(self.SRC))

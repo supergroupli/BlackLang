@@ -39,6 +39,7 @@ src/blacklang/
   codegen.py     # ★ AOT→Python 后端：AST 直译为 Python，≈CPython 速度
   cbackend.py    # ★ AOT→C 后端：AST → C 源码 → clang -O2 → 本机码（C 速度）
   llvmbackend.py # ★ AOT→LLVM 后端：AST → LLVM IR → clang/JIT；最快且支持进程内真 JIT
+  values.py      # ★ 运行时值类型：StructInstance（struct 实例）/ BoundMethod
   sandbox.py     # ★ 跨进程沙箱：子进程隔离 + 超时墙（三层防御最外一层）
   diagnostics.py # ★ 结构化诊断：机器可读 JSON(code/line/hint)，AI 可自纠
   scaffold.py    # ★ --init 一键生成可运行项目骨架
@@ -46,8 +47,8 @@ src/blacklang/
   cli.py         # blacklang <f> / --native / --emit-c / --check[--json] / --manifest / --sandbox / --init / REPL
 ```
 
-**已实现特性：** 变量/赋值、算术、字符串（含 `+` 数值自动转字符串）、条件/循环、
-递归函数、列表/字典、`==`/`!=`/`<` 比较、`sandbox` 权限强制（`readonly-fs`/`net`…）、
+**已实现特性：** 变量/`let` 声明、算术、字符串（含 `+` 数值自动转字符串）、条件/循环、
+递归函数、列表/字典、**`struct` 自定义类型（字段/方法/双访问）**、`==`/`!=`/`<` 比较、`sandbox` 权限强制（`readonly-fs`/`net`…）、
 `use python:/node:` 互操作、字节码 VM、AOT→Python 编译后端、AOT→C 原生编译后端、
 **AOT→LLVM 后端（含进程内真 JIT）**、跨进程沙箱、结构化 JSON 诊断。
 
@@ -61,6 +62,7 @@ PYTHONPATH=src python3 -m blacklang --emit-llvm <f>          # ★ 查看 LLVM I
 PYTHONPATH=src python3 -m blacklang --jit <f>                # ★ 进程内 LLVM JIT(需 llvmlite)
 PYTHONPATH=src python3 -m blacklang --native <f>             # ★ AOT→C 编译成本机码运行
 PYTHONPATH=src python3 -m blacklang --emit-c <f>             # ★ 查看生成的 C 源码
+PYTHONPATH=src python3 -m blacklang examples/structs.bl      # ★ struct 建模示例
 PYTHONPATH=src python3 -m blacklang examples/native_demo.bl  # ★ 计算密集示例(可用 --native 加速)
 PYTHONPATH=src python3 -m blacklang examples/business_demo/src/main.bl  # ★ 端到端业务 demo
 PYTHONPATH=src python3 -m blacklang --check <f>              # ★ 编译期检查(能力+类型)
@@ -70,7 +72,7 @@ PYTHONPATH=src python3 -m blacklang --sandbox <f> --timeout N # ★ 跨进程沙
 PYTHONPATH=src python3 -m blacklang --init <dir>            # ★ 一键生成可运行项目
 PYTHONPATH=src python3 -m blacklang -i                      # REPL(多行/持久状态/互操作)
 PYTHONPATH=src python3 benchmarks/bench.py                   # ★ 四路径性能基准
-python3 -m unittest tests.test_blacklang -v                 # 111 项测试
+python3 -m unittest tests.test_blacklang -v                 # 123 项测试
 ```
 
 **执行模型**：`blacklang f.bl` 会**先做编译期(能力+类型)检查，通过后才执行**——既保留
