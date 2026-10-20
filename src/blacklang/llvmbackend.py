@@ -23,9 +23,9 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
-    While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, ExprStmt,
+    ForIn, FuncDef, GetAttr, GetItem, If, ListLit, Literal, Match, Name, Program,
+    Return, Sandbox, StructDef, Unary, Use, While,
 )
 from .cbackend import (CodeGenC, CBackendError, T_ANY, T_BOOL, T_FLOAT, T_INT,
                        T_STRING, _NUMERIC_BUILTINS)
@@ -167,6 +167,7 @@ class CodeGenLLVM(CodeGenC):
         self.tmp_n = 0
         self.term = False
         self.vars: Dict[str, str] = {}
+        self._loops: List[dict] = []
 
     def _block(self, prefix: str) -> str:
         label = f"{prefix}{len(self.blocks)}"
@@ -377,6 +378,19 @@ class CodeGenLLVM(CodeGenC):
         if isinstance(s, ForIn):
             self._emit_for(s)
             return
+        if isinstance(s, Break):
+            if not self._loops:
+                raise CBackendError("LLVM 后端：break 只能出现在循环体内")
+            self.end(f"br label %{self._loops[-1]['break']}")
+            return
+        if isinstance(s, Continue):
+            if not self._loops:
+                raise CBackendError("LLVM 后端：continue 只能出现在循环体内")
+            self.end(f"br label %{self._loops[-1]['continue']}")
+            return
+        if isinstance(s, Match):
+            self._emit_match(s)
+            return
         if isinstance(s, Return):
             rt = self.return_types.get(self._cur_fn_name, T_INT)
             if s.value is None:
@@ -431,8 +445,10 @@ class CodeGenLLVM(CodeGenC):
         c = self._cond_i1(s.cond)
         self.end(f"br i1 {c}, label %{body_l}, label %{after_l}")
         self._start(body_l)
+        self._loops.append({"break": after_l, "continue": cond_l})
         for b in s.body:
             self._stmt(b)
+        self._loops.pop()
         if not self.term:
             self.end(f"br label %{cond_l}")
         self._start(after_l)
@@ -440,7 +456,16 @@ class CodeGenLLVM(CodeGenC):
     def _emit_for(self, s: ForIn):
         if not isinstance(s.iterable, ListLit):
             raise CBackendError("LLVM 后端：for-in 目前只支持列表字面量")
-        for it in s.iterable.items:
+        items = list(s.iterable.items)
+        exit_l = self._block("for_exit")
+        if not items:
+            self.end(f"br label %{exit_l}")
+            self._start(exit_l)
+            return
+        labels = [self._block("for_it") for _ in items]
+        self.end(f"br label %{labels[0]}")
+        for i, it in enumerate(items):
+            self._start(labels[i])
             v = self._expr(it)
             ty = self._lookup(s.var)
             if ty == T_ANY:
@@ -450,8 +475,52 @@ class CodeGenLLVM(CodeGenC):
             ptr = self._var(s.var, ty)
             v = self._to(v, self._expr_type(it), ty)
             self.emit(f"store {self._ty(ty)} {v}, {self._pty(ty)} {ptr}")
+            nxt = labels[i + 1] if i + 1 < len(labels) else exit_l
+            self._loops.append({"break": exit_l, "continue": nxt})
             for b in s.body:
                 self._stmt(b)
+            self._loops.pop()
+            if not self.term:
+                self.end(f"br label %{nxt}")
+        self._start(exit_l)
+
+    def _emit_match(self, s: Match):
+        vt = self._expr_type(s.value)
+        if vt == T_ANY:
+            vt = T_INT
+        slot = self._new_scratch(vt)
+        v = self._expr(s.value)
+        self.emit(f"store {self._ty(vt)} {v}, {self._pty(vt)} {slot}")
+        end_l = self._block("match_end")
+        for pat, body in s.arms:
+            if pat is None:
+                for b in body:
+                    self._stmt(b)
+                if not self.term:
+                    self.end(f"br label %{end_l}")
+                break
+            cur = self.tmp()
+            self.emit(f"{cur} = load {self._ty(vt)}, {self._pty(vt)} {slot}")
+            pv = self._to(self._expr(pat), self._expr_type(pat), vt)
+            then_l = self._block("match_then")
+            next_l = self._block("match_next")
+            c = self.tmp()
+            if vt == T_FLOAT:
+                self.emit(f"{c} = fcmp oeq double {cur}, {pv}")
+            elif vt == T_STRING:
+                r = self.tmp()
+                self.emit(f"{r} = call i32 @strcmp({self.P} {cur}, {self.P} {pv})")
+                self.emit(f"{c} = icmp eq i32 {r}, 0")
+            else:
+                self.emit(f"{c} = icmp eq i64 {cur}, {pv}")
+            self.end(f"br i1 {c}, label %{then_l}, label %{next_l}")
+            self._start(then_l)
+            for b in body:
+                self._stmt(b)
+            if not self.term:
+                self.end(f"br label %{end_l}")
+            self._start(next_l)
+        self._start(end_l)
 
     # ---------------- 条件 ----------------
     def _cond_i1(self, e) -> str:

@@ -11,13 +11,23 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef, Unary, Use,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, ExprStmt,
+    ForIn, FuncDef, GetAttr,
+    GetItem, If, ListLit, Literal, Match, Name, Program, Return, Sandbox, StructDef,
+    Unary, Use,
     While,
 )
 from .interop import InteropBus, InteropError, InteropValue
 from .values import BoundMethod, StructInstance
 from . import stdlib
+
+
+class BreakSignal(Exception):
+    pass
+
+
+class ContinueSignal(Exception):
+    pass
 
 
 class ReturnSignal(Exception):
@@ -109,7 +119,12 @@ class Evaluator:
         elif isinstance(stmt, While):
             guard = 0
             while self._truthy(self._eval(stmt.cond)):
-                self._exec_block(stmt.body, self.globals)
+                try:
+                    self._exec_block(stmt.body, self.globals)
+                except ContinueSignal:
+                    pass
+                except BreakSignal:
+                    break
                 guard += 1
                 if guard > 1_000_000:
                     raise BlackRuntimeError("循环次数超过安全上限")
@@ -117,7 +132,22 @@ class Evaluator:
             it = self._eval(stmt.iterable)
             for item in it:
                 self.globals[stmt.var] = item
-                self._exec_block(stmt.body, self.globals)
+                try:
+                    self._exec_block(stmt.body, self.globals)
+                except ContinueSignal:
+                    continue
+                except BreakSignal:
+                    break
+        elif isinstance(stmt, Break):
+            raise BreakSignal()
+        elif isinstance(stmt, Continue):
+            raise ContinueSignal()
+        elif isinstance(stmt, Match):
+            v = self._eval(stmt.value)
+            for pat, body in stmt.arms:
+                if pat is None or self._eval(pat) == v:
+                    self._exec_block(body, self.globals)
+                    break
         elif isinstance(stmt, Return):
             raise ReturnSignal(self._eval(stmt.value) if stmt.value else None)
         elif isinstance(stmt, Sandbox):

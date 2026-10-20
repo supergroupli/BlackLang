@@ -123,6 +123,22 @@ class FuncDef(Stmt):
 
 
 @dataclass
+class Break(Stmt):
+    pass
+
+
+@dataclass
+class Continue(Stmt):
+    pass
+
+
+@dataclass
+class Match(Stmt):
+    value: Expr
+    arms: List[tuple] = field(default_factory=list)   # [(模式表达式 或 None(兜底), 语句列表)]
+
+
+@dataclass
 class StructDef(Stmt):
     name: str
     fields: List[tuple] = field(default_factory=list)   # [(字段名, 类型名或 None), ...]

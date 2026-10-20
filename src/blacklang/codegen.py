@@ -16,9 +16,9 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
-    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
-    StructDef, Unary, Use, While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, ExprStmt,
+    ForIn, FuncDef, GetAttr, GetItem, If, ListLit, Literal, Match, Name, Program,
+    Return, Sandbox, StructDef, Unary, Use, While,
 )
 
 # 语言保留词 → Python 关键字映射（BL 保留词很少，安全起见通用映射）
@@ -266,6 +266,28 @@ class CodeGen:
     def _stmt(self, s, level: int) -> List[str]:
         if isinstance(s, Assign):
             return [f"{_py_name(s.name)} = {self._expr(s.value)}"]
+        if isinstance(s, Break):
+            return ["break"]
+        if isinstance(s, Continue):
+            return ["continue"]
+        if isinstance(s, Match):
+            self._match_n = getattr(self, "_match_n", 0) + 1
+            tmp = f"_bl_m{self._match_n}"
+            out: List[str] = [f"{tmp} = {self._expr(s.value)}"]
+            first = True
+            for pat, body in s.arms:
+                if pat is None:
+                    if first:
+                        out.extend(self._stmts(body, level + 1))
+                    else:
+                        out.append("else:")
+                        out.extend(_indent(self._stmts(body, level + 1)))
+                    break
+                kw = "if" if first else "elif"
+                out.append(f"{kw} {tmp} == {self._expr(pat)}:")
+                out.extend(_indent(self._stmts(body, level + 1)))
+                first = False
+            return out
         if isinstance(s, AttrAssign):
             return [f"{self._expr(s.obj)}.{_py_name(s.attr)} = {self._expr(s.value)}"]
         if isinstance(s, StructDef):

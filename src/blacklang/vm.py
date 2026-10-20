@@ -11,9 +11,9 @@ import operator as _op
 from typing import Any, Dict, List
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
-    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
-    StructDef, Unary, Use, While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, ExprStmt,
+    ForIn, FuncDef, GetAttr, GetItem, If, ListLit, Literal, Match, Name, Program,
+    Return, Sandbox, StructDef, Unary, Use, While,
 )
 from .interop import InteropValue
 from .values import BoundMethod, StructInstance
@@ -91,6 +91,7 @@ class Compiler:
     def __init__(self, program: Program):
         self.program = program
         self.funcs: Dict[str, Func] = {}
+        self._loop_stack: List[dict] = []
 
     def compile(self) -> Dict[str, Func]:
         self.structs: Dict[str, List[str]] = {
@@ -168,12 +169,37 @@ class Compiler:
             self._expr(s.cond, fc, scope, fn_names)
             jf = fc.pc()
             fc.e(JIF, 0)
+            ctx = {"continue_pc": start, "breaks": [], "continues": []}
+            self._loop_stack.append(ctx)
             for b in s.body:
                 self._stmt(b, fc, scope, fn_names)
+            self._loop_stack.pop()
             fc.e(JUMP, start)
-            fc.patch(jf, fc.pc())
+            end = fc.pc()
+            fc.patch(jf, end)
+            for bj in ctx["breaks"]:
+                fc.patch(bj, end)
         elif isinstance(s, ForIn):
             self._for(s, fc, scope, fn_names)
+        elif isinstance(s, Break):
+            if not self._loop_stack:
+                raise CompileError("break 只能出现在循环体内")
+            j = fc.pc()
+            fc.e(JUMP, 0)
+            self._loop_stack[-1]["breaks"].append(j)
+        elif isinstance(s, Continue):
+            if not self._loop_stack:
+                raise CompileError("continue 只能出现在循环体内")
+            ctx = self._loop_stack[-1]
+            if ctx.get("continue_pc") is not None:
+                fc.e(JUMP, ctx["continue_pc"])
+            else:
+                # for 循环的自增段在 body 之后，先占位稍后回填
+                j = fc.pc()
+                fc.e(JUMP, 0)
+                ctx["continues"].append(j)
+        elif isinstance(s, Match):
+            self._emit_match(s, fc, scope, fn_names)
         elif isinstance(s, Return):
             if s.value:
                 self._expr(s.value, fc, scope, fn_names)
@@ -211,17 +237,53 @@ class Compiler:
         fc.e(LLOAD, idx_slot)
         fc.e(GETITEM)
         fc.e(LSTORE, var_slot)
+        ctx = {"continue_pc": None, "breaks": [], "continues": []}
+        self._loop_stack.append(ctx)
         for b in s.body:
             self._stmt(b, fc, scope, fn_names)
-        # idx += 1
+        self._loop_stack.pop()
+        # 自增段起点：回填所有 continue 的占位跳转
+        inc_pc = fc.pc()
+        for j in ctx["continues"]:
+            fc.patch(j, inc_pc)
+        # idx += 1（continue 目标）
+        inc_pc = fc.pc()
         fc.e(LLOAD, idx_slot)
         fc.e(PUSH, _ic(fc, 1))
         fc.e(BINOP, OP_ADD)
         fc.e(LSTORE, idx_slot)
         fc.e(JUMP, cond)
-        fc.patch(jf, fc.pc())
+        end = fc.pc()
+        fc.patch(jf, end)
+        for bj in ctx["breaks"]:
+            fc.patch(bj, end)
         # 从作用域移除 var（以免函数结束后残留），且 CMP 隐式槽保留仅供本循环使用
         del scope[s.var]
+
+    def _emit_match(self, s: Match, fc, scope, fn_names):
+        slot = self._slots
+        self._slots += 1
+        self._expr(s.value, fc, scope, fn_names)
+        fc.e(LSTORE, slot)
+        end_jumps: List[int] = []
+        for pat, body in s.arms:
+            if pat is None:
+                for b in body:
+                    self._stmt(b, fc, scope, fn_names)
+                break
+            fc.e(LLOAD, slot)
+            self._expr(pat, fc, scope, fn_names)
+            fc.e(CMP, OP_EQ)
+            jf = fc.pc()
+            fc.e(JIF, 0)
+            for b in body:
+                self._stmt(b, fc, scope, fn_names)
+            j = fc.pc()
+            fc.e(JUMP, 0)
+            end_jumps.append(j)
+            fc.patch(jf, fc.pc())
+        for j in end_jumps:
+            fc.patch(j, fc.pc())
 
     # ---- expressions ----
     def _expr(self, e, fc, scope, fn_names):

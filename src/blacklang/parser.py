@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import List
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, DictLit, Expr, ExprStmt, ForIn, FuncDef,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, Expr,
+    ExprStmt, ForIn, FuncDef,
     GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox,
-    Stmt, StructDef, Unary, Use, While,
+    Match, Stmt, StructDef, Unary, Use, While,
 )
 from .tokenizer import Token, tokenize
 
@@ -82,6 +83,18 @@ class Parser:
                 return self._use()
             if k == "struct":
                 return self._struct()
+            if k == "break":
+                self._advance()
+                if self._check("OP", ";"):
+                    self._advance()
+                return Break()
+            if k == "continue":
+                self._advance()
+                if self._check("OP", ";"):
+                    self._advance()
+                return Continue()
+            if k == "match":
+                return self._match()
             if k == "run":
                 return self._run_main()
             if k == "par":
@@ -126,6 +139,33 @@ class Parser:
             self._advance()
         return Assign(name=name, value=value, type_annotation=type_annotation,
                       is_decl=True)
+
+    def _match(self) -> Match:
+        self._expect("KEYWORD", "match")
+        value = self._expr()
+        if self._check("OP", ":"):
+            self._advance()
+        self._expect("OP", "{")
+        arms = []
+        while not self._check("OP", "}"):
+            self._expect("KEYWORD", "case")
+            if self._check("IDENT") and self._cur().value == "_":
+                self._advance()
+                pat = None
+            else:
+                pat = self._expr()
+            if self._check("OP", ":"):
+                self._advance()
+            self._expect("OP", "{")
+            body = []
+            while not self._check("OP", "}"):
+                body.append(self._stmt())
+            self._expect("OP", "}")
+            arms.append((pat, body))
+            if self._check("OP", ";"):
+                self._advance()
+        self._expect("OP", "}")
+        return Match(value=value, arms=arms)
 
     def _struct(self) -> StructDef:
         tok = self._expect("KEYWORD", "struct")

@@ -1,0 +1,71 @@
+// BlackLang 控制流示例：match 分支 + break/continue
+// 场景：把一批「状态码」翻译成人类可读消息，并做分类统计
+
+// 状态码 → 消息（match 字面量分支 + 兜底 _）
+fn http_message(code) {
+    match code {
+        case 200: { return "OK" }
+        case 201: { return "Created" }
+        case 301: { return "Moved" }
+        case 400: { return "Bad Request" }
+        case 404: { return "Not Found" }
+        case 500: { return "Server Error" }
+        case _: { return "Unknown" }
+    }
+}
+
+// 是否为「成功」类（2xx）
+fn is_ok(code) {
+    return code >= 200 and code < 300
+}
+
+run main: {
+    let codes = [200, 404, 500, 301, 201, 418, 400]
+
+    // 1) match 翻译
+    print("== 状态码翻译 ==")
+    for c in codes {
+        print(c + " -> " + http_message(c))
+    }
+
+    // 2) continue：只统计成功类
+    let ok_count = 0
+    for c in codes {
+        if is_ok(c) == false { continue }
+        ok_count = ok_count + 1
+    }
+    print("成功类(2xx) 个数 = " + ok_count)
+
+    // 3) break：找到第一个错误码就停
+    let first_err = -1
+    for c in codes {
+        if is_ok(c) { continue }
+        first_err = c
+        break
+    }
+    print("第一个错误码 = " + first_err)
+
+    // 4) while + break：最多找 3 个错误码
+    let errs = []
+    let i = 0
+    while i < codes.len() {
+        if is_ok(codes[i]) {
+            i = i + 1
+            continue
+        }
+        if errs.len() >= 3 { break }
+        errs.append(codes[i])
+        i = i + 1
+    }
+    print("前三错误码 = " + errs)
+
+    // 5) match 对字符串分类
+    for c in codes {
+        match http_message(c) {
+            case "OK": { print(c + ": 健康") }
+            case "Not Found": { print(c + ": 资源缺失") }
+            case "Server Error": { print(c + ": 服务异常") }
+            case _: { print(c + ": 其他") }
+        }
+    }
+}

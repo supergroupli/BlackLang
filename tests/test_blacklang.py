@@ -1149,3 +1149,100 @@ True
         with self.assertRaises(CBackendError) as cm:
             compile_to_c(parse('run main: { print(" x ".trim()) }'))
         self.assertIn("方法", str(cm.exception))
+
+
+class TestBreakContinueMatch(unittest.TestCase):
+    """break / continue / match 四后端一致 + match 分支能力分析。"""
+
+    SRC = """run main: {
+  let i = 0
+  while i < 10 {
+    i = i + 1
+    if i == 3 { continue }
+    if i > 6 { break }
+    print(i)
+  }
+  match 2 {
+    case 1: { print("one") }
+    case 2: { print("two") }
+    case _: { print("other") }
+  }
+  match "x" {
+    case "y": { print("Y") }
+    case _: { print("fallback") }
+  }
+}"""
+
+    EXPECTED = "1\n2\n4\n5\n6\ntwo\nfallback"
+
+    def _all_outputs(self):
+        outs = {}
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(self.SRC))
+        outs["vm"] = o.getvalue()
+        from blacklang.evaluator import Evaluator
+        o2 = io.StringIO()
+        with contextlib.redirect_stdout(o2):
+            Evaluator(parse(self.SRC)).run()
+        outs["tree"] = o2.getvalue()
+        from blacklang.codegen import compile_to_python, exec_compiled
+        outs["py"] = exec_compiled(compile_to_python(parse(self.SRC)))
+        from blacklang.cbackend import c_available, compile_to_c, build_and_run
+        if c_available():
+            r = build_and_run(compile_to_c(parse(self.SRC)))
+            self.assertTrue(r["ok"], (r.get("cc_out") or "")[:300])
+            outs["c"] = r["stdout"]
+        from blacklang.llvmbackend import llvm_available, compile_to_llvm_ir, build_and_run_ir
+        if llvm_available():
+            r2 = build_and_run_ir(compile_to_llvm_ir(parse(self.SRC)))
+            self.assertTrue(r2["ok"], (r2.get("cc_out") or "")[:300])
+            outs["llvm"] = r2["stdout"]
+        return outs
+
+    def test_all_backends_agree(self):
+        outs = self._all_outputs()
+        self.assertGreaterEqual(len(outs), 4)
+        self.assertEqual(len(set(outs.values())), 1, f"后端不一致: {outs}")
+        for v in outs.values():
+            self.assertEqual(v.rstrip("\n"), self.EXPECTED)
+
+    def test_break_nested(self):
+        src = ("run main: { let s = 0 for i in [1,2,3] { for j in [1,2,3] { "
+               "if j == 2 { break } s = s + 1 } } print(s) }")
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(src))
+        self.assertEqual(o.getvalue().strip(), "3")
+
+    def test_match_no_match_falls_through(self):
+        src = 'run main: { match 9 { case 1: { print("a") } } print("done") }'
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(src))
+        self.assertEqual(o.getvalue().strip(), "done")
+
+    def test_match_float_and_bool(self):
+        src = ('run main: { match 1.5 { case 1.5: { print("f") } case _: { print("n") } } '
+               'match true { case true: { print("t") } case _: { print("x") } } }')
+        from blacklang.vm import run_vm
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            run_vm(parse(src))
+        self.assertEqual(o.getvalue().split(), ["f", "t"])
+
+    def test_break_outside_loop_raises(self):
+        from blacklang.vm import Compiler
+        from blacklang.parser import parse
+        with self.assertRaises(Exception):
+            Compiler(parse("run main: { break }")).compile()
+
+    def test_capability_in_match_arm_is_checked(self):
+        # 安全：match 分支内的越权调用必须被编译期拦截
+        from blacklang.checker import static_check
+        prog = parse('run main: { match 1 { case 1: { let x = http_get("u") } case _: { print(1) } } }')
+        checker, cap_errors = static_check(prog)
+        self.assertTrue(any("越权" in e for e in cap_errors), cap_errors)

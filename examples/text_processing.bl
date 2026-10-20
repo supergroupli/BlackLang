@@ -14,11 +14,9 @@ fn uniq_words(text) {
     let words = text.trim().lower().split(" ")
     let out = []
     for w in words {
-        if w.is_empty() == false {
-            if out.contains(w) == false {
-                out.append(w)
-            }
-        }
+        if w.is_empty() { continue }
+        if out.contains(w) { continue }
+        out.append(w)
     }
     return out
 }

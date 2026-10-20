@@ -112,13 +112,13 @@ def native_run_file(path: str) -> int:
             print("  ✗ " + e)
         return 1
     if c_available() is None:
-        print("[BlackLang native] 未找到 C 编译器，回退到字节码 VM。")
+        print("[BlackLang native] 未找到 C 编译器，回退到字节码 VM。", file=sys.stderr)
         return run_file(path)
     try:
         c_src = compile_to_c(program)
     except CBackendError as e:
-        print(f"[BlackLang native] {e}")
-        print("[BlackLang native] 已回退到字节码 VM 路径。")
+        print(f"[BlackLang native] {e}", file=sys.stderr)
+        print("[BlackLang native] 已回退到字节码 VM 路径。", file=sys.stderr)
         return run_file(path)
     result = build_and_run(c_src)
     if not result["ok"]:
@@ -229,16 +229,16 @@ def llvm_run_file(path: str, use_jit: bool = False) -> int:
             print("  ✗ " + e)
         return 1
     if use_jit and not jit_available():
-        print("[BlackLang jit] 未找到可用的 llvmlite，回退到 LLVM AOT(clang) 路径。")
+        print("[BlackLang jit] 未找到可用的 llvmlite，回退到 LLVM AOT(clang) 路径。", file=sys.stderr)
         use_jit = False
     if not use_jit and llvm_available() is None:
-        print("[BlackLang llvm] 未找到 clang，回退到字节码 VM。")
+        print("[BlackLang llvm] 未找到 clang，回退到字节码 VM。", file=sys.stderr)
         return run_file(path)
     try:
         res = run_llvm(program, use_jit=use_jit)
     except CBackendError as e:
-        print(f"[BlackLang llvm] {e}")
-        print("[BlackLang llvm] 已回退到字节码 VM 路径。")
+        print(f"[BlackLang llvm] {e}", file=sys.stderr)
+        print("[BlackLang llvm] 已回退到字节码 VM 路径。", file=sys.stderr)
         return run_file(path)
     if not res["ok"]:
         for e in res["errors"]:

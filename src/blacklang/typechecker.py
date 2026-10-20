@@ -14,9 +14,9 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Set, Union
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, ExprStmt, ForIn, FuncDef, GetAttr,
-    GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef, Unary,
-    Use, While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, ExprStmt, ForIn,
+    FuncDef, GetAttr, GetItem, If, ListLit, Literal, Match, Name, Program, Return,
+    Sandbox, StructDef, Unary, Use, While,
 )
 from .checker import StaticChecker
 
@@ -159,6 +159,15 @@ class TypeChecker:
         if isinstance(stmt, AttrAssign):
             self._check_expr(stmt.obj)
             self._check_expr(stmt.value)
+            return
+        if isinstance(stmt, Match):
+            self._check_expr(stmt.value)
+            for pat, body in stmt.arms:
+                if pat is not None:
+                    self._check_expr(pat)
+                self._check_body(body)
+            return
+        if isinstance(stmt, (Break, Continue)):
             return
         if isinstance(stmt, Assign):
             t = self._check_expr(stmt.value)

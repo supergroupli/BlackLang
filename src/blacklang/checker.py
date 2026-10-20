@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
 from .ast_nodes import (
-    Assign, Binary, Call, Compare, ExprStmt, ForIn, FuncDef, GetAttr, GetItem,
-    If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use, While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, ExprStmt, ForIn,
+    FuncDef, GetAttr, GetItem,
+    If, ListLit, Literal, Match, Name, Program, Return, Sandbox, StructDef, Unary,
+    Use, While,
 )
 
 # 内建能力要求表：函数名 -> 所需权限（None 表示无需权限）
@@ -80,6 +82,14 @@ class StaticChecker:
             self._scan_body(stmt.body, granted | set(stmt.caps))
         elif isinstance(stmt, FuncDef):
             self._scan_fn(stmt)
+        elif isinstance(stmt, Match):
+            self._scan_expr(stmt.value, granted)
+            for pat, body in stmt.arms:
+                if pat is not None:
+                    self._scan_expr(pat, granted)
+                self._scan_body(body, granted)
+        elif isinstance(stmt, AttrAssign):
+            self._scan_expr(stmt.value, granted)
         elif isinstance(stmt, ExprStmt):
             self._scan_expr(stmt.expr, granted)
 
@@ -154,6 +164,13 @@ class StaticChecker:
             caps |= self._collect_caps(node.iterable)
             for s in node.body:
                 caps |= self._collect_caps(s)
+        elif isinstance(node, Match):
+            caps |= self._collect_caps(node.value)
+            for pat, body in node.arms:
+                if pat is not None:
+                    caps |= self._collect_caps(pat)
+                for st in body:
+                    caps |= self._collect_caps(st)
         elif isinstance(node, Return):
             if node.value:
                 caps |= self._collect_caps(node.value)

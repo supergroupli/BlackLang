@@ -17,7 +17,7 @@ KEYWORDS = {
     "run", "main", "if", "elif", "else", "for", "in", "while",
     "fn", "return", "let", "true", "false", "and", "or", "not",
     "sandbox", "readonly-fs", "net", "par", "use", "struct",
-    "print", "import",
+    "print", "import", "break", "continue", "match", "case",
 }
 
 

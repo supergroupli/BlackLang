@@ -48,7 +48,8 @@ src/blacklang/
   cli.py         # blacklang <f> / --native / --emit-c / --check[--json] / --manifest / --sandbox / --init / REPL
 ```
 
-**已实现特性：** 变量/`let` 声明、算术、字符串（含 `+` 数值自动转字符串）、条件/循环、
+**已实现特性：** 变量/`let` 声明、算术、字符串（含 `+` 数值自动转字符串）、
+条件/循环（含 `break`/`continue`）、**`match` 分支匹配**、
 递归函数、列表/字典、**`struct` 自定义类型（字段/方法/双访问）**、`==`/`!=`/`<` 比较、`sandbox` 权限强制（`readonly-fs`/`net`…）、
 `use python:/node:` 互操作、**标准库（字符串/列表/字典方法 + 数值函数）**、
 字节码 VM、AOT→Python 编译后端、AOT→C 原生编译后端、
@@ -66,6 +67,7 @@ PYTHONPATH=src python3 -m blacklang --native <f>             # ★ AOT→C 编�
 PYTHONPATH=src python3 -m blacklang --emit-c <f>             # ★ 查看生成的 C 源码
 PYTHONPATH=src python3 -m blacklang examples/structs.bl      # ★ struct 建模示例
 PYTHONPATH=src python3 -m blacklang examples/text_processing.bl # ★ 标准库文本清洗示例
+PYTHONPATH=src python3 -m blacklang examples/control_flow.bl   # ★ match + break/continue 示例
 PYTHONPATH=src python3 -m blacklang examples/native_demo.bl  # ★ 计算密集示例(可用 --native 加速)
 PYTHONPATH=src python3 -m blacklang examples/business_demo/src/main.bl  # ★ 端到端业务 demo
 PYTHONPATH=src python3 -m blacklang --check <f>              # ★ 编译期检查(能力+类型)
@@ -75,7 +77,7 @@ PYTHONPATH=src python3 -m blacklang --sandbox <f> --timeout N # ★ 跨进程沙
 PYTHONPATH=src python3 -m blacklang --init <dir>            # ★ 一键生成可运行项目
 PYTHONPATH=src python3 -m blacklang -i                      # REPL(多行/持久状态/互操作)
 PYTHONPATH=src python3 benchmarks/bench.py                   # ★ 四路径性能基准
-python3 -m unittest tests.test_blacklang -v                 # 132 项测试
+python3 -m unittest tests.test_blacklang -v                 # 138 项测试
 ```
 
 **执行模型**：`blacklang f.bl` 会**先做编译期(能力+类型)检查，通过后才执行**——既保留

@@ -25,9 +25,9 @@ import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_nodes import (
-    Assign, AttrAssign, Binary, Call, Compare, DictLit, ExprStmt, ForIn, FuncDef,
-    GetAttr, GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, StructDef,
-    Unary, Use, While,
+    Assign, AttrAssign, Binary, Break, Call, Compare, Continue, DictLit, ExprStmt,
+    ForIn, FuncDef, GetAttr, GetItem, If, ListLit, Literal, Match, Name, Program,
+    Return, Sandbox, StructDef, Unary, Use, While,
 )
 
 
@@ -456,6 +456,39 @@ class CodeGenC:
             out.extend("    " + ln for ln in self._stmts(s.body))
             out.append("}")
             return out
+        if isinstance(s, Break):
+            return ["break;"]
+        if isinstance(s, Continue):
+            return ["continue;"]
+        if isinstance(s, Match):
+            self._match_n = getattr(self, "_match_n", 0) + 1
+            tmp = f"_bl_m{self._match_n}"
+            vt = self._expr_type_safe(s.value)
+            if vt == T_ANY:
+                vt = T_INT
+            self._declared.add(tmp)
+            self._locals.setdefault(tmp, vt)
+            out2: List[str] = [f"{tmp} = {self._coerce_to(s.value, vt)};"]
+            first = True
+            for pat, body in s.arms:
+                if pat is None:
+                    if first:
+                        out2.extend(self._stmts(body))
+                    else:
+                        out2.append("else {")
+                        out2.extend("    " + ln for ln in self._stmts(body))
+                        out2.append("}")
+                    break
+                cond = self._compare({
+                    "op": "==", "left": None, "right": None,
+                }) if False else None
+                pv = self._coerce_to(pat, vt)
+                kw = "if" if first else "else if"
+                out2.append(f"{kw} ({tmp} == {pv}) {{")
+                out2.extend("    " + ln for ln in self._stmts(body))
+                out2.append("}")
+                first = False
+            return out2
         if isinstance(s, ForIn):
             # 仅支持列表字面量：展开为 C 数组 + 索引循环
             if not isinstance(s.iterable, ListLit):
