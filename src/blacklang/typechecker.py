@@ -32,6 +32,19 @@ BUILTIN_SIGS = {
     "str": ([None], "string"),          # 任意值 -> 字符串
     "int": ([None], "int"),
     "float": ([None], "float"),
+    # 标准库全局函数（stdlib.py）
+    "abs": ([None], "any"),
+    "min": ([None, None], "any"),
+    "max": ([None, None], "any"),
+    "floor": ([None], "int"),
+    "ceil": ([None], "int"),
+    "round": ([None], "any"),
+    "sqrt": ([None], "float"),
+    "pow": ([None, None], "float"),
+    "clamp": ([None, None, None], "any"),
+    "sign": ([None], "int"),
+    "len": ([None], "int"),
+    "append": ([None, None], "any"),
 }
 
 NUMERIC = {"int", "float"}

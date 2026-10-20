@@ -1,0 +1,70 @@
+// BlackLang 标准库示例：文本清洗与统计（AI/Agent 最常做的一类活）
+// 演示字符串方法 / 列表方法 / 全局数值函数的组合使用
+
+// 解析一行 "name,qty,price"；空行与 # 注释返回空列表
+fn parse_line(line) {
+    let t = line.trim()
+    if t.is_empty() { return [] }
+    if t.starts_with("#") { return [] }
+    return t.split(",")
+}
+
+// 去重（保留首次出现顺序）
+fn uniq_words(text) {
+    let words = text.trim().lower().split(" ")
+    let out = []
+    for w in words {
+        if w.is_empty() == false {
+            if out.contains(w) == false {
+                out.append(w)
+            }
+        }
+    }
+    return out
+}
+
+// 最长词的字符长度
+fn longest_len(words) {
+    let best = 0
+    for w in words {
+        if w.len() > best { best = w.len() }
+    }
+    return best
+}
+
+run main: {
+    // ---- 1) 清洗一份「脏」CSV 文本 ----
+    let raw = "  # 这是注释\n 键盘 , 2 , 199.0 \n\n显示器,1,1299.0\n 鼠标 ,3,89.5 "
+    let lines = raw.split("\n")
+    let total = 0.0
+    let rows = 0
+    for line in lines {
+        let f = parse_line(line)
+        if f.len() == 3 {
+            let name = f[0].trim()
+            let qty = f[1].trim().to_int()
+            let price = f[2].trim().to_float()
+            let sub = qty * price
+            total = total + sub
+            rows = rows + 1
+            print(name.pad_right(8, ".") + " " + qty + " x " + price + " = " + sub)
+        }
+    }
+    print("有效行 = " + rows + "，合计 = " + total)
+
+    // ---- 2) 文本统计 ----
+    let text = "BlackLang is fast and BlackLang is safe"
+    let words = uniq_words(text)
+    print("去重后按字典序 = " + words.sort())
+    print("去重词数 = " + words.len())
+    print("最长词长度 = " + longest_len(words))
+
+    // ---- 3) 数值工具 ----
+    let nums = [3, 1, 4, 1, 5, 9, 2, 6]
+    print("排序 = " + nums.sort())
+    print("最大 = " + nums.max() + "，最小 = " + nums.min())
+    let mean = nums.sum() / nums.len()
+    print("均值 = " + mean)
+    print("clamp(均值, 3, 4) = " + clamp(mean, 3, 4))
+    print("sqrt(均值) = " + sqrt(mean))
+}

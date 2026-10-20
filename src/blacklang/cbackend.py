@@ -39,6 +39,7 @@ class CBackendError(Exception):
 T_INT, T_FLOAT, T_STRING, T_BOOL, T_ANY = "int", "float", "string", "bool", "any"
 
 _C_TYPE = {T_INT: "long long", T_FLOAT: "double", T_STRING: "char *", T_BOOL: "long long"}
+_NUMERIC_BUILTINS = {"abs", "min", "max", "floor", "ceil", "round", "sqrt", "pow", "clamp", "sign"}
 _ZERO = {T_INT: "0LL", T_FLOAT: "0.0", T_STRING: '""', T_BOOL: "0LL"}
 
 
@@ -350,8 +351,18 @@ class CodeGenC:
                     return T_FLOAT
                 if n == "len":
                     return T_INT
+                if n == "abs":
+                    return self._expr_type(e.args[0]) if e.args else T_INT
+                if n in ("min", "max", "clamp"):
+                    return _merge(self._expr_type(e.args[0]), self._expr_type(e.args[1]))
+                if n in ("floor", "ceil", "round", "sign"):
+                    return T_INT
+                if n in ("sqrt", "pow"):
+                    return T_FLOAT
                 raise CBackendError(f"C 后端：未知函数 {n}")
-            raise CBackendError("C 后端：不支持动态调用")
+            raise CBackendError(
+                "C 后端暂不支持方法调用（标准库方法，如 s.trim() / xs.sort()）；"
+                "请用 VM / AOT→Python 路径运行")
         raise CBackendError(f"C 后端：不支持的表达式 {type(e).__name__}")
 
     def _lookup(self, name: str) -> str:
@@ -607,6 +618,9 @@ class CodeGenC:
                 if n == "float":
                     return f"((double)({self._coerce_to(e.args[0], T_FLOAT)}))"
                 return f"((long long)({self._coerce_to(e.args[0], T_INT)}))"
+            # ---- 数值标准库（原生，保持快路径）----
+            if n in _NUMERIC_BUILTINS:
+                return self._numeric_builtin(n, e.args)
             if n in self.return_types:
                 rt = self.return_types[n]
                 args = []
@@ -615,7 +629,42 @@ class CodeGenC:
                     args.append(self._coerce_to(a, pt))
                 return f"bl_{n}({', '.join(args) if args else ''})"
             raise CBackendError(f"C 后端：未知函数 {n}()")
-        raise CBackendError("C 后端：不支持动态调用")
+        # 方法调用：obj.method(...) —— 字符串/列表标准库方法暂不支持原生
+        raise CBackendError(
+            "C 后端暂不支持方法调用（标准库方法，如 s.trim() / xs.sort()）；"
+            "请用 VM / AOT→Python 路径运行")
+
+    def _numeric_builtin(self, name: str, args) -> str:
+        if name == "abs":
+            t = self._expr_type(args[0])
+            v = self._expr(args[0])
+            if t == T_FLOAT:
+                return f"fabs({v})"
+            return f"(({v}) < 0 ? -({v}) : ({v}))"
+        if name in ("min", "max"):
+            a, b = self._expr(args[0]), self._expr(args[1])
+            return (f"(({a}) < ({b}) ? ({a}) : ({b}))" if name == "min"
+                    else f"(({a}) > ({b}) ? ({a}) : ({b}))")
+        if name in ("floor", "ceil", "round", "sqrt"):
+            v = self._coerce_to(args[0], T_FLOAT)
+            if name == "round":
+                return f"((long long)llround({v}))"
+            if name == "floor":
+                return f"((long long)floor({v}))"
+            if name == "ceil":
+                return f"((long long)ceil({v}))"
+            return f"sqrt({v})"
+        if name == "pow":
+            a = self._coerce_to(args[0], T_FLOAT)
+            b = self._coerce_to(args[1], T_FLOAT)
+            return f"pow({a}, {b})"
+        if name == "clamp":
+            x, lo, hi = (self._expr(a) for a in args)
+            return f"(({x}) < ({lo}) ? ({lo}) : (({x}) > ({hi}) ? ({hi}) : ({x})))"
+        if name == "sign":
+            v = self._expr(args[0])
+            return f"((({v}) > 0) - (({v}) < 0))"
+        raise CBackendError(f"C 后端：未实现的数值函数 {name}()")
 
     # ---------------- 类型转换/辅助 ----------------
     def _coerce_to(self, e, t: str) -> str:

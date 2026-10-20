@@ -27,7 +27,8 @@ from .ast_nodes import (
     GetItem, If, ListLit, Literal, Name, Program, Return, Sandbox, Unary, Use,
     While,
 )
-from .cbackend import CodeGenC, CBackendError, T_ANY, T_BOOL, T_FLOAT, T_INT, T_STRING
+from .cbackend import (CodeGenC, CBackendError, T_ANY, T_BOOL, T_FLOAT, T_INT,
+                       T_STRING, _NUMERIC_BUILTINS)
 
 _LLVAL = {T_INT: "i64", T_FLOAT: "double", T_BOOL: "i64"}
 _LLZERO = {T_INT: "0", T_FLOAT: "0.000000e+00", T_STRING: "null", T_BOOL: "0"}
@@ -76,6 +77,12 @@ declare double @strtod({P}, {P})
 declare {P} @strcat({P}, {P})
 declare {P} @strpbrk({P}, {P})
 declare i32 @strcmp({P}, {P})
+declare double @fabs(double)
+declare double @floor(double)
+declare double @ceil(double)
+declare double @round(double)
+declare double @sqrt(double)
+declare double @pow(double, double)
 
 define {P} @bl_concat({P} %a, {P} %b) {{
 entry:
@@ -600,7 +607,9 @@ class CodeGenLLVM(CodeGenC):
 
     def _call(self, e: Call) -> str:
         if not isinstance(e.callee, Name):
-            raise CBackendError("LLVM 后端：不支持动态调用")
+            raise CBackendError(
+                "LLVM 后端暂不支持方法调用（标准库方法，如 s.trim() / xs.sort()）；"
+                "请用 VM / AOT→Python 路径运行")
         n = e.callee.name
         if n == "print":
             return self._emit_print(e.args)
@@ -617,6 +626,8 @@ class CodeGenLLVM(CodeGenC):
             t = self.tmp()
             self.emit(f"{t} = call i64 @strlen({self.P} {v})")
             return t
+        if n in _NUMERIC_BUILTINS:
+            return self._numeric_builtin(n, e.args)
         if n in self.return_types:
             rt = self.return_types[n]
             args = []
@@ -631,6 +642,90 @@ class CodeGenLLVM(CodeGenC):
             self.emit(f"{t} = call {self._ty(rt)} @bl_{n}({typed})")
             return t
         raise CBackendError(f"LLVM 后端：未知函数 {n}()")
+
+    def _numeric_builtin(self, name: str, args) -> str:
+        if name == "abs":
+            t0 = self._expr_type(args[0])
+            v = self._expr(args[0])
+            r = self.tmp()
+            if t0 == T_FLOAT:
+                self.emit(f"{r} = call double @fabs(double {v})")
+            else:
+                neg = self.tmp()
+                self.emit(f"{neg} = sub i64 0, {v}")
+                c = self.tmp()
+                self.emit(f"{c} = icmp sgt i64 {v}, 0")
+                self.emit(f"{r} = select i1 {c}, i64 {v}, i64 {neg}")
+            return r
+        if name in ("min", "max"):
+            t0 = _merge_ty(self._expr_type(args[0]), self._expr_type(args[1]))
+            a = self._to(self._expr(args[0]), self._expr_type(args[0]), t0)
+            b = self._to(self._expr(args[1]), self._expr_type(args[1]), t0)
+            c = self.tmp()
+            r = self.tmp()
+            if t0 == T_FLOAT:
+                op = "olt" if name == "min" else "ogt"
+                self.emit(f"{c} = fcmp {op} double {a}, {b}")
+                self.emit(f"{r} = select i1 {c}, double {a}, double {b}")
+            else:
+                op = "slt" if name == "min" else "sgt"
+                self.emit(f"{c} = icmp {op} i64 {a}, {b}")
+                self.emit(f"{r} = select i1 {c}, i64 {a}, i64 {b}")
+            return r
+        if name in ("sqrt", "pow"):
+            if name == "sqrt":
+                v = self._to(self._expr(args[0]), self._expr_type(args[0]), T_FLOAT)
+                r = self.tmp()
+                self.emit(f"{r} = call double @sqrt(double {v})")
+                return r
+            a = self._to(self._expr(args[0]), self._expr_type(args[0]), T_FLOAT)
+            b = self._to(self._expr(args[1]), self._expr_type(args[1]), T_FLOAT)
+            r = self.tmp()
+            self.emit(f"{r} = call double @pow(double {a}, double {b})")
+            return r
+        if name in ("floor", "ceil", "round"):
+            fn = {"floor": "floor", "ceil": "ceil", "round": "round"}[name]
+            v = self._to(self._expr(args[0]), self._expr_type(args[0]), T_FLOAT)
+            d = self.tmp()
+            self.emit(f"{d} = call double @{fn}(double {v})")
+            r = self.tmp()
+            self.emit(f"{r} = fptosi double {d} to i64")
+            return r
+        if name == "clamp":
+            x = self._expr(args[0])
+            lo = self._expr(args[1])
+            hi = self._expr(args[2])
+            t0 = _merge_ty(_merge_ty(self._expr_type(args[0]), self._expr_type(args[1])),
+                           self._expr_type(args[2]))
+            c1 = self.tmp(); s1 = self.tmp(); c2 = self.tmp(); r = self.tmp()
+            if t0 == T_FLOAT:
+                self.emit(f"{c1} = fcmp olt double {x}, {lo}")
+                self.emit(f"{s1} = select i1 {c1}, double {lo}, double {x}")
+                self.emit(f"{c2} = fcmp ogt double {s1}, {hi}")
+                self.emit(f"{r} = select i1 {c2}, double {hi}, double {s1}")
+            else:
+                self.emit(f"{c1} = icmp slt i64 {x}, {lo}")
+                self.emit(f"{s1} = select i1 {c1}, i64 {lo}, i64 {x}")
+                self.emit(f"{c2} = icmp sgt i64 {s1}, {hi}")
+                self.emit(f"{r} = select i1 {c2}, i64 {hi}, i64 {s1}")
+            return r
+        if name == "sign":
+            v = self._expr(args[0])
+            t0 = self._expr_type(args[0])
+            r = self.tmp()
+            if t0 == T_FLOAT:
+                # 简化：转 int 后比较
+                iv = self.tmp()
+                self.emit(f"{iv} = fptosi double {v} to i64")
+                v = iv
+            g = self.tmp(); l = self.tmp(); d1 = self.tmp(); d2 = self.tmp()
+            self.emit(f"{g} = icmp sgt i64 {v}, 0")
+            self.emit(f"{l} = icmp slt i64 {v}, 0")
+            self.emit(f"{d1} = zext i1 {g} to i64")
+            self.emit(f"{d2} = zext i1 {l} to i64")
+            self.emit(f"{r} = sub i64 {d1}, {d2}")
+            return r
+        raise CBackendError(f"LLVM 后端：未实现的数值函数 {name}()")
 
     def _emit_print(self, args) -> str:
         parts: List[str] = []

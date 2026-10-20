@@ -980,3 +980,172 @@ class TestStruct(unittest.TestCase):
         from blacklang.cbackend import compile_to_c, CBackendError
         with self.assertRaises(CBackendError):
             compile_to_c(parse(self.SRC))
+
+
+class TestStdlib(unittest.TestCase):
+    """标准库：字符串/列表/字典方法 + 全局数值函数，多后端一致。"""
+
+    SRC = open("/tmp/std2.bl", encoding="utf-8").read() if os.path.exists("/tmp/std2.bl") else None
+
+    # 内置一份自足的程序，避免依赖临时文件
+    PROGRAM = """run main: {
+  let s = " Hello, World "
+  print(s.len())
+  print(s.trim().lower())
+  print(s.trim().starts_with("Hel"))
+  print(s.trim().ends_with("ld"))
+  print(s.index_of("World"))
+  print(s.trim().replace("World", "BlackLang"))
+  print(s.slice(1, 6))
+  print(s.char_at(1))
+  print("ab".repeat(3))
+  print("ab".reverse())
+  print("".is_empty())
+  print("123".is_digit())
+  print(" 7 ".to_int() * 2)
+  print("3.5".to_float() + 1.0)
+  print("42".pad_left(5, "0"))
+  print("a,b,c".split(",").len())
+  print(",".join(["x", "y"]))
+  let xs = [5, 3, 9, 1]
+  print(xs.sort())
+  print(xs.max())
+  print(xs.min())
+  print(xs.contains(9))
+  print(xs.index_of(3))
+  print(xs.slice(1, 3))
+  print(xs.first())
+  print(xs.last())
+  print(xs.unique().len())
+  print(xs.reverse().join("-"))
+  let d = {"a": 1, "b": 2}
+  print(d.keys())
+  print(d.values())
+  print(d.has("a"))
+  print(d.get("z", 99))
+  print(abs(-7))
+  print(floor(3.7))
+  print(ceil(3.2))
+  print(round(3.5))
+  print(sqrt(9.0))
+  print(pow(2, 10))
+  print(clamp(15, 0, 10))
+  print(sign(-5))
+  print(min(3, 8))
+  print(max(3, 8))
+}"""
+
+    EXPECTED = """14
+hello, world
+True
+True
+8
+Hello, BlackLang
+Hello
+H
+ababab
+ba
+True
+True
+14
+4.5
+00042
+3
+x,y
+[1, 3, 5, 9]
+9
+1
+True
+1
+[3, 9]
+5
+1
+4
+1-9-3-5
+['a', 'b']
+[1, 2]
+True
+99
+7
+3
+4
+4
+3.0
+1024.0
+10
+-1
+3
+8"""
+
+    def _vm(self):
+        from blacklang.vm import run_vm
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_vm(parse(self.PROGRAM))
+        return out.getvalue()
+
+    def test_vm_stdlib_full(self):
+        self.assertEqual(self._vm().rstrip("\n"), self.EXPECTED)
+
+    def test_treewalk_stdlib_full(self):
+        from blacklang.evaluator import Evaluator
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            Evaluator(parse(self.PROGRAM)).run()
+        self.assertEqual(out.getvalue().rstrip("\n"), self.EXPECTED)
+
+    def test_python_aot_stdlib_full(self):
+        from blacklang.codegen import compile_to_python, exec_compiled
+        out = exec_compiled(compile_to_python(parse(self.PROGRAM)))
+        self.assertEqual(out.rstrip("\n"), self.EXPECTED)
+
+    def test_three_paths_agree(self):
+        from blacklang.evaluator import Evaluator
+        from blacklang.codegen import compile_to_python, exec_compiled
+        outs = {"vm": self._vm()}
+        o = io.StringIO()
+        with contextlib.redirect_stdout(o):
+            Evaluator(parse(self.PROGRAM)).run()
+        outs["tree"] = o.getvalue()
+        outs["py"] = exec_compiled(compile_to_python(parse(self.PROGRAM)))
+        self.assertEqual(len(set(outs.values())), 1, "三路径输出不一致")
+
+    def test_check_passes(self):
+        from blacklang.checker import static_check
+        from blacklang.typechecker import type_check
+        prog = parse(self.PROGRAM)
+        checker, cap = static_check(prog)
+        self.assertEqual(cap + type_check(prog, checker), [])
+
+    def test_stdlib_error_messages(self):
+        from blacklang.vm import run_vm
+        from blacklang.values import StructInstance  # noqa: F401
+        with self.assertRaises(Exception) as cm:
+            run_vm(parse('run main: { print("abc".to_int()) }'))
+        self.assertIn("to_int", str(cm.exception))
+
+    def test_numeric_builtins_c_backend(self):
+        from blacklang.cbackend import c_available, compile_to_c, build_and_run
+        if c_available() is None:
+            self.skipTest("无 clang")
+        src = ("run main: { print(abs(-7)); print(floor(3.7)); print(sqrt(9.0)); "
+               "print(max(3, 8)); print(pow(2, 10)); }")
+        r = build_and_run(compile_to_c(parse(src)))
+        self.assertTrue(r["ok"], (r.get("cc_out") or "")[:300])
+        self.assertEqual(r["stdout"], "7\n3\n3.0\n8\n1024.0\n")
+
+    def test_numeric_builtins_llvm(self):
+        from blacklang.llvmbackend import llvm_available, compile_to_llvm_ir, build_and_run_ir
+        if llvm_available() is None:
+            self.skipTest("无 clang")
+        src = ("run main: { print(abs(-7)); print(floor(3.7)); print(sqrt(9.0)); "
+               "print(max(3, 8)); print(pow(2, 10)); }")
+        r = build_and_run_ir(compile_to_llvm_ir(parse(src)))
+        self.assertTrue(r["ok"], (r.get("cc_out") or "")[:300])
+        self.assertEqual(r["stdout"], "7\n3\n3.0\n8\n1024.0\n")
+
+    def test_methods_fall_back_on_c_backend(self):
+        from blacklang.cbackend import compile_to_c, CBackendError
+        with self.assertRaises(CBackendError) as cm:
+            compile_to_c(parse('run main: { print(" x ".trim()) }'))
+        self.assertIn("方法", str(cm.exception))

@@ -36,6 +36,88 @@ _BUILTIN_MAP = {
 _CMP_MAP = {"<": "<", ">": ">", "<=": "<=", ">=": ">=", "==": "==", "!=": "!="}
 
 
+
+# ---------------- 标准库 → Python 映射 ----------------
+# 每个条目: 方法名 -> 生成函数 (obj_code, arg_codes) -> Python 表达式
+_METHOD_MAP = {
+    # 字符串
+    "upper": lambda o, a: f"({o}).upper()",
+    "lower": lambda o, a: f"({o}).lower()",
+    "trim": lambda o, a: f"({o}).strip()",
+    "split": lambda o, a: f"({o}).split({a[0]})" if a else f"({o}).split()",
+    "replace": lambda o, a: f"({o}).replace({a[0]}, {a[1]})",
+    "contains": lambda o, a: f"({a[0]} in {o})",
+    "starts_with": lambda o, a: f"({o}).startswith({a[0]})",
+    "ends_with": lambda o, a: f"({o}).endswith({a[0]})",
+    "count": lambda o, a: f"({o}).count({a[0]})",
+    "char_at": lambda o, a: f"({o})[{a[0]}]",
+    "to_int": lambda o, a: f"int(({o}).strip())",
+    "to_float": lambda o, a: f"float(({o}).strip())",
+    "repeat": lambda o, a: f"(({o}) * {a[0]})",
+    "is_digit": lambda o, a: f"({o}).isdigit()",
+    "pad_left": lambda o, a: f"({o}).rjust({a[0]}, {a[1]})" if len(a) > 1 else f"({o}).rjust({a[0]})",
+    "pad_right": lambda o, a: f"({o}).ljust({a[0]}, {a[1]})" if len(a) > 1 else f"({o}).ljust({a[0]})",
+    # 列表
+    "append": lambda o, a: f"({o}).append({a[0]})",
+    "push": lambda o, a: f"({o}).append({a[0]})",
+    "sum": lambda o, a: f"sum({o})",
+    "sort": lambda o, a: f"sorted({o})",
+    "sort_in_place": lambda o, a: f"({o}).sort() or {o}",
+    "min": lambda o, a: f"min({o})",
+    "max": lambda o, a: f"max({o})",
+    "first": lambda o, a: f"({o}[0] if {o} else None)",
+    "last": lambda o, a: f"({o}[-1] if {o} else None)",
+    "insert": lambda o, a: f"({o}).insert({a[0]}, {a[1]}) or {o}",
+    "remove_at": lambda o, a: f"({o}).pop({a[0]})",
+    "unique": lambda o, a: f"list(dict.fromkeys({o}))",
+    "extend": lambda o, a: f"({o}).extend({a[0]}) or {o}",
+    # 字典
+    "keys": lambda o, a: f"list(({o}).keys())",
+    "values": lambda o, a: f"list(({o}).values())",
+    "has": lambda o, a: f"({a[0]} in {o})",
+    "get": lambda o, a: f"({o}).get({a[0]})" if len(a) < 2 else f"({o}).get({a[0]}, {a[1]})",
+}
+
+# 既可用于字符串也可用于列表/字典的通用方法
+_METHOD_GENERIC = {
+    "len": lambda o, a: f"len({o})",
+    "reverse": lambda o, a: f"_bl_reverse({o})",
+    "slice": lambda o, a: f"({o})[{a[0]}:{a[1]}]" if len(a) > 1 else f"({o})[{a[0]}:]",
+    "index_of": lambda o, a: f"_bl_index_of({o}, {a[0]})",
+    "is_empty": lambda o, a: f"(len({o}) == 0)",
+    "count": lambda o, a: f"({o}).count({a[0]})",
+    "join": lambda o, a: f"_bl_join({o}, {a[0]})",
+    "contains": lambda o, a: f"({a[0]} in {o})",
+}
+
+# 全局函数 → Python
+_GLOBAL_MAP = {
+    "abs": "abs", "round": "round", "pow": "math.pow",
+    "floor": "math.floor", "ceil": "math.ceil", "sqrt": "math.sqrt",
+    "clamp": None, "sign": None, "min": "min", "max": "max",
+}
+
+_PRELUDE_PY = """import math
+
+
+def _bl_reverse(x):
+    return x[::-1] if isinstance(x, str) else list(reversed(x))
+
+
+def _bl_index_of(x, v):
+    if isinstance(x, str):
+        return x.find(v)
+    return x.index(v) if v in x else -1
+
+
+def _bl_join(x, arg):
+    # x 是分隔符（字符串 join 列表）或列表（列表 join 分隔符）
+    if isinstance(x, str):
+        return x.join(str(_e) for _e in arg)
+    return str(arg).join(str(_e) for _e in x)
+"""
+
+
 class CodegenError(Exception):
     pass
 
@@ -104,6 +186,7 @@ class CodeGen:
     def generate(self) -> str:
         self._collect_str_names()
         out: List[str] = []
+        out.append(_PRELUDE_PY.rstrip())
         # 收集函数定义 + 顶层 use + main 顶层语句
         func_defs: List[FuncDef] = []
         struct_defs: List = []
@@ -236,14 +319,26 @@ class CodeGen:
         if isinstance(e, Compare):
             return f"({self._expr(e.left)} {_CMP_MAP[e.op]} {self._expr(e.right)})"
         if isinstance(e, Call):
-            # list 扩展方法调用：d.len() -> len(d), d.sum() -> sum(d), d.append(x) -> d.append(x)
             c = e.callee
-            if isinstance(c, GetAttr) and c.attr in ("len", "sum", "append"):
+            # 标准库方法：s.trim() / xs.sort() / d.keys()
+            if isinstance(c, GetAttr):
                 obj = self._expr(c.obj)
-                if c.attr == "append":
-                    return f"{obj}.append({', '.join(self._expr(a) for a in e.args)})"
-                return f"{c.attr}({obj})" if not e.args else \
-                    f"{c.attr}({obj}, {', '.join(self._expr(a) for a in e.args)})"
+                args = [self._expr(a) for a in e.args]
+                for tbl in (_METHOD_MAP, _METHOD_GENERIC):
+                    fn = tbl.get(c.attr)
+                    if fn is not None:
+                        return fn(obj, args)
+            # 标准库全局函数：sqrt(x) / clamp(x, lo, hi)
+            if isinstance(c, Name):
+                g = _GLOBAL_MAP.get(c.name)
+                if g == "clamp" or c.name == "clamp":
+                    a = [self._expr(x) for x in e.args]
+                    return f"max({a[1]}, min({a[2]}, {a[0]}))"
+                if c.name == "sign":
+                    a = [self._expr(x) for x in e.args]
+                    return f"(({a[0]} > 0) - ({a[0]} < 0))"
+                if g:
+                    return f"{g}({', '.join(self._expr(a) for a in e.args)})"
             return f"{self._expr(c)}({', '.join(self._expr(a) for a in e.args)})"
         if isinstance(e, ListLit):
             return f"[{', '.join(self._expr(i) for i in e.items)}]"

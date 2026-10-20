@@ -17,6 +17,7 @@ from .ast_nodes import (
 )
 from .interop import InteropBus, InteropError, InteropValue
 from .values import BoundMethod, StructInstance
+from . import stdlib
 
 
 class ReturnSignal(Exception):
@@ -42,6 +43,17 @@ _BUILTINS: Dict[str, tuple] = {
     "int": (lambda v: int(v), None, "转为整数"),
     "float": (lambda v: float(v), None, "转为浮点"),
     "append": (lambda v, x: v.append(x), None, "追加到列表"),
+    # 标准库全局函数（纯计算，无需权限）
+    "abs": (stdlib._g_abs, None, "绝对值"),
+    "min": (stdlib._g_min, None, "最小值"),
+    "max": (stdlib._g_max, None, "最大值"),
+    "floor": (stdlib._g_floor, None, "向下取整"),
+    "ceil": (stdlib._g_ceil, None, "向上取整"),
+    "round": (stdlib._g_round, None, "四舍五入"),
+    "sqrt": (stdlib._g_sqrt, None, "平方根"),
+    "pow": (stdlib._g_pow, None, "幂"),
+    "clamp": (stdlib._g_clamp, None, "夹取到区间"),
+    "sign": (stdlib._g_sign, None, "符号"),
 }
 
 
@@ -209,12 +221,10 @@ class Evaluator:
             if child is None:
                 raise BlackRuntimeError(f"互操作对象 {obj!r} 没有成员 {node.attr!r}")
             return child
-        # 原生 BlackLang list，支持基本成员
-        if isinstance(obj, list):
-            methods = {"len": lambda: len(obj), "append": lambda x: obj.append(x),
-                       "sum": lambda: sum(obj)}
-            if node.attr in methods:
-                return methods[node.attr]
+        # 标准库方法（字符串/列表/字典）——与 VM 共用同一实现
+        m = stdlib.get_method(obj, node.attr)
+        if m is not None:
+            return m
         if hasattr(obj, node.attr):
             return getattr(obj, node.attr)
         raise BlackRuntimeError(f"对象没有成员 {node.attr!r}")
@@ -276,6 +286,8 @@ class Evaluator:
         if isinstance(node.callee, Name) and node.callee.name in self.structs:
             return self._construct(node.callee.name, args)
         callee = self._eval(node.callee)
+        if stdlib.is_native_method(callee):
+            return callee(*args)
         if isinstance(callee, BoundMethod):
             fn = callee.target.methods[callee.name.split(".", 1)[1]]
             if isinstance(fn, dict) and "params" in fn:

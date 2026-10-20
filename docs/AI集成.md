@@ -107,6 +107,9 @@ blacklang --native（或 bl.native_run）执行 → 拿到 stdout
 
 ## 给 AI 的提示词（把 BlackLang 教给 LLM 的最小话术）
 
+> BlackLang 自带标准库：字符串 `trim/upper/split/join/replace/contains/to_int`、
+> 列表 `sort/sum/max/min/unique/join`、数值 `abs/min/max/floor/ceil/round/sqrt/pow/clamp`，无需 import。
+>
 > 你可以写 BlackLang 程序替我干活：语法块用花括号、语句以分号结尾（可省略尾分号）、
 > `fn name(params) { ... }` 定义函数、`run main: { ... }` 是入口、`let x = ...` 声明、
 > `for i in list { }` / `while cond { }` 循环、`if/else` 分支、`use python: { json }` 互通。

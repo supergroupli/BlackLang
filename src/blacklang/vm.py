@@ -17,6 +17,7 @@ from .ast_nodes import (
 )
 from .interop import InteropValue
 from .values import BoundMethod, StructInstance
+from . import stdlib
 
 # ---- 操作码 ----
 PUSH, LOAD, STORE, LLOAD, LSTORE, BINOP, UOP, CMP, JUMP, JIF, JIT, DUP, \
@@ -403,9 +404,10 @@ class VM:
                 items = [stack.pop() for _ in range(arg)][::-1]
                 stack.append(items); ip += 2
             elif op == MAKEDICT:
+                # 栈上顺序为 k1 v1 k2 v2 …，需按原顺序插入（保持键序与源码一致）
+                pairs = [(stack.pop(), stack.pop()) for _ in range(arg)]  # (值, 键)
                 d = {}
-                for _ in range(arg):
-                    v = stack.pop(); k = stack.pop()
+                for v, k in reversed(pairs):
                     d[k] = v
                 stack.append(d); ip += 2
             elif op == GETITEM:
@@ -432,6 +434,8 @@ class VM:
         return None
 
     def _call(self, callee, args):
+        if stdlib.is_native_method(callee):
+            return callee(*args)
         if isinstance(callee, _StructCtor):
             if len(args) != len(callee.fields):
                 raise RuntimeError(
@@ -461,6 +465,9 @@ class VM:
 
 
 def _getattr(obj, name):
+    m = stdlib.get_method(obj, name)
+    if m is not None:
+        return m
     if isinstance(obj, StructInstance):
         if name in obj.fields:
             return obj.fields[name]
